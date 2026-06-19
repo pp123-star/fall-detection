@@ -434,7 +434,8 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
         if st.bbox is not None and np.any(st.bbox):
             x1, y1, x2, y2 = st.bbox.astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            label = f"id:{st.track_id}  P:{st.smoothed_prob:.2f}"
+            status = "FALL" if is_fall else "NORMAL"
+            label = f"id:{st.track_id} {status} P(fall):{st.smoothed_prob:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
                 _draw_label(frame, "FALL", (x1, y2 + 18), COLOR_FALL, scale=0.6)
