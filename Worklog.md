@@ -349,3 +349,15 @@ checkpoint=dict(
 * `best_acc_top1_epoch_*.pth` 是按验证集 `acc/top1` 单独保存的最优模型。
 * 如果后续 epoch 出现过拟合，普通最近 3 个 checkpoint 可能较差，但之前保存的 best checkpoint 不会因此消失，除非出现新的验证集分数更高的 best。
 * 后续正式测试、推理和部署应优先使用 `best_acc_top1_epoch_*.pth`，不是盲目使用最后一轮模型。
+
+### 7.5 GitHub 同步与本地代理诊断
+
+* 本地 Git 代理原配置为 `http://127.0.0.1:7890`，但 `127.0.0.1:7890` 当前没有监听进程。
+* 本机实际监听到 `127.0.0.1:7892`，进程为 `ShanHaiCore.exe`，因此判断为 Git 代理端口配置不匹配，不是典型端口冲突。
+* 已使用一次性代理参数推送到 GitHub，未修改全局 Git 代理配置：
+
+```powershell
+git -c http.proxy=http://127.0.0.1:7892 -c https.proxy=http://127.0.0.1:7892 push origin main
+```
+
+* 推送结果：`main -> main`，GitHub 已包含本次新增的多目标实时检测文档和推理脚本。
