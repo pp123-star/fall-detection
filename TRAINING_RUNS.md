@@ -201,9 +201,48 @@ Conclusion:
 * Also keep `work_dirs/posec3d_fall_binary/epoch_24.pth` as the final-epoch comparison checkpoint.
 * The result is excellent on the current project split, but it should not be treated as full real-world generalization proof because evaluation still uses `xsub_val` from the current dataset package.
 
+External real-video smoke test:
+
+* Date: 2026-06-20.
+* Videos: `data/real_test/test4.mp4` to `data/real_test/test7.mp4`.
+* User confirmation: all 4 videos contain fall actions.
+* Inference output directory on server:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_test_overlay_test4567_20260620_044418
+```
+
+| Video | Ground truth | Detection | Max/alert P(fall) | Note |
+| --- | --- | --- | ---: | --- |
+| `test4.mp4` | fall | missed | NA | No alert; max probability was not logged by the current summary |
+| `test5.mp4` | fall | detected | 0.7350 | Alert at frame 186, track 2 |
+| `test6.mp4` | fall | detected | 0.6244 | Alert at frame 223, track 1 |
+| `test7.mp4` | fall | missed | NA | No alert; max probability was not logged by the current summary |
+
+Real-video smoke-test result:
+
+```text
+Detected: 2 / 4
+Missed:   2 / 4
+```
+
+Interpretation:
+
+* The trained checkpoint works technically, but real phone videos reveal deployment/generalization gaps.
+* This does not invalidate the training result; it identifies the next improvement target.
+* Likely factors include short fall duration, about-60fps source videos making `clip_len=48` cover only about 0.8 seconds, vertical high-resolution framing, pose quality, and track stability.
+* Visual inspection confirms that `test4.mp4` and `test7.mp4` are hard positive samples:
+  * `test4.mp4` is an ice-slip fall with black winter clothing, hood occlusion, hand-support/half-sitting motion, reflective ice, and a fall pattern that differs from a standard indoor fall.
+  * `test7.mp4` is a very short night snow-scene fall, mostly back-facing, with bulky clothing, motion blur, and limited stable post-fall visibility.
+* `test5.mp4` and `test6.mp4` are easier positives because the person remains more visible and the fall/post-fall posture is clearer.
+* Current real-video summary logs only alert events. For missed videos, `NA` means the current summary did not record max probability, not that the model necessarily assigned zero fall probability.
+
 Follow-up:
 
 * Add independent real videos or camera-captured samples for external testing.
 * Add hard negative samples: sitting down quickly, lying down normally, bending, squatting, jumping, exercising, occlusion, poor lighting, camera shake, and multi-person scenes.
 * If external testing exposes false positives or false negatives, fine-tune or retrain with those samples included.
 * Before future training runs, decide whether to archive more than the latest 3 normal checkpoints. The current config only keeps `best` plus the latest 3 normal epoch checkpoints.
+* For real-video inference, test 30fps resampling or time-based clip sampling so the action window covers enough real time.
+* Try more sensitive deployment thresholds/alert settings before retraining, then use confirmed misses such as `test4.mp4` and `test7.mp4` as real hard-positive samples for fine-tuning.
+* Add per-inference probability logging for real videos, including max/mean/top-k `P(fall)`, so missed videos can be diagnosed quantitatively instead of relying only on alert events.
