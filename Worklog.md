@@ -580,3 +580,74 @@ cached_predictor Pfall:   0.9993390440940857
 3. 频繁检查日志中是否出现 `推理异常`、`Traceback`、`Expected input`、`cannot import`。
 4. 一旦出现异常，立即停止 `screen` 任务，修复代码后重跑。
 5. 确认 smoke test 无异常后，再处理 `test4.mp4`、`test5.mp4`、`test6.mp4`、`test7.mp4`。
+
+### 9.7 test4-test7 有效重跑结果
+
+按用户要求删除旧的 `test4-test7` 输出后，重新处理：
+
+```text
+data/real_test/test4.mp4
+data/real_test/test5.mp4
+data/real_test/test6.mp4
+data/real_test/test7.mp4
+```
+
+本次输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_test_overlay_test4567_20260620_044418
+```
+
+运行参数要点：
+
+```text
+checkpoint: work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+pose weights: yolo26x-pose.pt
+threshold: 0.5
+infer-every: 2
+max-persons: 5
+imgsz: 640
+```
+
+日志检查结果：
+
+* 没有 `推理异常`。
+* 没有 `Traceback`。
+* 没有 `Expected input`。
+* 没有 `cannot import`。
+* 没有后台 `screen` 任务残留。
+
+汇总：
+
+| Video | Status | Alerts | Event |
+| --- | --- | ---: | --- |
+| `test4.mp4` | ok | 0 | 无报警 |
+| `test5.mp4` | ok | 1 | frame 186, track 2, `P(fall)=0.7350` |
+| `test6.mp4` | ok | 1 | frame 223, track 1, `P(fall)=0.6244` |
+| `test7.mp4` | ok | 0 | 无报警 |
+
+事件日志：
+
+```json
+{"source": "data/real_test/test5.mp4", "frame_idx": 186, "track_id": 2, "fall_prob": 0.735, "event": "onset"}
+{"source": "data/real_test/test6.mp4", "frame_idx": 223, "track_id": 1, "fall_prob": 0.6244, "event": "onset"}
+```
+
+输出文件：
+
+```text
+outputs/real_test_overlay_test4567_20260620_044418/videos/test4_overlay.mp4
+outputs/real_test_overlay_test4567_20260620_044418/videos/test5_overlay.mp4
+outputs/real_test_overlay_test4567_20260620_044418/videos/test6_overlay.mp4
+outputs/real_test_overlay_test4567_20260620_044418/videos/test7_overlay.mp4
+outputs/real_test_overlay_test4567_20260620_044418/summary.tsv
+outputs/real_test_overlay_test4567_20260620_044418/events/
+outputs/real_test_overlay_test4567_20260620_044418/snapshots/
+outputs/real_test_overlay_test4567_20260620_044418/logs/
+```
+
+当前结论：
+
+* 修复后的推理链路已能在真实视频上触发摔倒报警。
+* `test5`、`test6` 检出摔倒；`test4`、`test7` 未报警，需要人工查看 overlay 视频确认是否为漏报、视频中动作不满足模型判断，或跟踪/骨骼质量不足。
+* 后续若确认 `test4/test7` 是明显摔倒漏报，应将这些视频及相似姿态加入困难真实样本，作为后续微调/重训数据。
