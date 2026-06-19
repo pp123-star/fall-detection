@@ -1,0 +1,17 @@
+# 辅助安装文件,作为 setup_autodl.sh 的补充
+# 主依赖通过 mim 装(见 setup_autodl.sh),这里只放纯 pip 依赖
+
+numpy<2.0
+scikit-learn
+seaborn
+matplotlib>=3.7
+rich
+tqdm
+opencv-python>=4.8
+decord>=0.6
+pandas>=2.0
+ultralytics>=8.3.222
+
+# 如果需要导出 ONNX 用 TensorRT 部署,放开下面注释
+# onnx>=1.15
+# onnxruntime-gpu>=1.16
