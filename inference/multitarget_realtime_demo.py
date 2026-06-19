@@ -106,7 +106,7 @@ class CachedClipPredictor:
         self.device = device
         self.pipeline = None
         try:
-            from mmaction.datasets.transforms import Compose
+            from mmengine.dataset import Compose
             cfg = model.cfg
             if hasattr(cfg, "val_pipeline"):
                 pcfg = cfg.val_pipeline
@@ -125,17 +125,10 @@ class CachedClipPredictor:
             # 兜底:用原始 predict_clip(每次自建 pipeline,但保证可用)
             return _predict_clip_fallback(self.model, clip_sample, device=self.device)
 
-        data = self.pipeline(clip_sample.copy())
-        if isinstance(data, dict) and "inputs" in data:
-            inputs = data["inputs"]
-            if isinstance(inputs, list):
-                inputs = [x.unsqueeze(0).to(self.device) for x in inputs]
-            else:
-                inputs = inputs.unsqueeze(0).to(self.device)
-            data_samples = [data["data_samples"]] if "data_samples" in data else None
-            result = self.model.test_step(dict(inputs=inputs, data_samples=data_samples))[0]
-        else:
-            result = self.model.test_step([data])[0]
+        from mmengine.dataset import pseudo_collate
+
+        data = pseudo_collate([self.pipeline(clip_sample.copy())])
+        result = self.model.test_step(data)[0]
 
         score = result.pred_score if hasattr(result, "pred_score") else result.get("pred_score")
         if torch.is_tensor(score):

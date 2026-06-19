@@ -454,3 +454,129 @@ work_dirs/posec3d_fall_binary/epoch_24_pred.pkl
 work_dirs/posec3d_fall_binary/epoch_24_metrics.txt
 work_dirs/posec3d_fall_binary/eval_epoch_24/
 ```
+
+## 9. 2026-06-20 真实视频叠加推理排查记录
+
+**执行人:** Codex  
+**服务器目录:** `/root/autodl-tmp/fall-detection`
+
+### 9.1 用户上传视频
+
+用户上传了 7 个真实视频到服务器：
+
+```text
+data/real_test/test1.mp4
+data/real_test/test2.mp4
+data/real_test/test3.mp4
+data/real_test/test4.mp4
+data/real_test/test5.mp4
+data/real_test/test6.mp4
+data/real_test/test7.mp4
+```
+
+检查结果：
+
+* 7 个视频均可被 OpenCV 打开。
+* 分辨率均为 `1440x3200` 竖屏。
+* 帧率约 `60fps`。
+* 视频长度从约 3.4 秒到约 56.9 秒不等。
+
+### 9.2 已执行的服务器同步
+
+服务器上的 `inference/multitarget_realtime_demo.py` 原先仍显示旧标签：
+
+```text
+id:<track_id> P:<prob>
+```
+
+已同步为本地/GitHub 当前显示方式：
+
+```text
+id:<track_id> NORMAL/FALL P(fall):<prob>
+```
+
+该修改只影响可视化标签，不改变模型、阈值、跟踪或分类逻辑。
+
+### 9.3 无效输出删除
+
+曾生成过两批真实视频 overlay 输出，但均判定为无效：
+
+```text
+outputs/real_test_overlay_20260620_042341
+outputs/real_test_overlay_test4567_20260620_043330
+```
+
+原因是动作分类阶段未正常完成，`P(fall)` 没有可靠更新。上述输出目录已从服务器删除，避免后续误用。
+
+### 9.4 推理脚本问题定位
+
+第一处问题：
+
+```text
+cannot import name 'Compose' from 'mmaction.datasets.transforms'
+```
+
+原因：当前服务器的 MMAction2/MMEngine 版本中，`Compose` 应从 `mmengine.dataset` 导入。
+
+修正：
+
+```python
+from mmengine.dataset import Compose
+```
+
+第二处问题：
+
+```text
+Expected input type to be list, but got <class 'torch.Tensor'>
+```
+
+原因：`model.test_step(...)` 需要经过 dataloader collate 后的输入格式。旧脚本手动对 `inputs` 做 `unsqueeze(0)` 后传入 tensor，导致 MMAction2 data preprocessor 拒绝。
+
+修正：
+
+```python
+from mmengine.dataset import Compose, pseudo_collate
+
+pipeline = Compose(val_pipeline_cfg)
+data = pseudo_collate([pipeline(clip_sample.copy())])
+result = model.test_step(data)[0]
+```
+
+同类修正已同步到：
+
+```text
+inference/batch_predict.py
+inference/multitarget_realtime_demo.py
+```
+
+### 9.5 最小闭环验证
+
+在服务器上用 `data/fall_binary_xsub.pkl` 的一个验证集摔倒样本做最小动作分类测试：
+
+```text
+sample: S001C001P003R001A043
+label: 1
+```
+
+验证结果：
+
+```text
+predict_clip Pfall:       0.9993390440940857
+cached_predictor Pfall:   0.9993390440940857
+```
+
+结论：
+
+* 训练好的 checkpoint 可以正常返回摔倒概率。
+* 问题发生在真实视频推理脚本的数据打包层，不是模型文件无法加载。
+* 下一次重跑真实视频前，应先跑单个短 clip/单个视频片段 smoke test，确认日志中没有 `推理异常`，再批量处理完整视频。
+
+### 9.6 下一次真实视频处理要求
+
+下次运行时必须采用分阶段检查：
+
+1. 先跑最小动作分类闭环，确认 `P(fall)` 可返回。
+2. 再只跑一个短视频或短片段。
+3. 频繁检查日志中是否出现 `推理异常`、`Traceback`、`Expected input`、`cannot import`。
+4. 一旦出现异常，立即停止 `screen` 任务，修复代码后重跑。
+5. 确认 smoke test 无异常后，再处理 `test4.mp4`、`test5.mp4`、`test6.mp4`、`test7.mp4`。

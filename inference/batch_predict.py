@@ -79,7 +79,7 @@ def predict_clip(model, clip_sample, device="cuda:0"):
     走 MMAction2 PoseDataset 的 pipeline,从 dict → torch 输入。
     不同模型(PoseConv3D vs ST-GCN++)的 pipeline 不同,这里通过 model.cfg 自动选。
     """
-    from mmaction.datasets.transforms import Compose
+    from mmengine.dataset import Compose, pseudo_collate
 
     # 从 cfg 取 val pipeline(确保与训练时一致)
     val_pipeline_cfg = model.cfg.val_pipeline if hasattr(model.cfg, "val_pipeline") \
@@ -87,20 +87,8 @@ def predict_clip(model, clip_sample, device="cuda:0"):
         else model.cfg.val_dataloader.dataset.pipeline
 
     pipeline = Compose(val_pipeline_cfg)
-    data = pipeline(clip_sample.copy())
-
-    # PoseDataset 输出的 'inputs' 已经是 torch.Tensor;给它套 batch 维度
-    if isinstance(data, dict) and "inputs" in data:
-        inputs = data["inputs"]
-        if isinstance(inputs, list):
-            inputs = [x.unsqueeze(0).to(device) for x in inputs]
-        else:
-            inputs = inputs.unsqueeze(0).to(device)
-        data_samples = [data["data_samples"]] if "data_samples" in data else None
-        result = model.test_step(dict(inputs=inputs, data_samples=data_samples))[0]
-    else:
-        # 兜底:直接 forward(老 API)
-        result = model.test_step([data])[0]
+    data = pseudo_collate([pipeline(clip_sample.copy())])
+    result = model.test_step(data)[0]
 
     # pred_score: 通常是 (num_classes,) 的 tensor
     score = result.pred_score if hasattr(result, "pred_score") else result.get("pred_score")
