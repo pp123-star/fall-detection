@@ -31,6 +31,7 @@ fall-detection/
 │   ├── 03_model_training.md
 │   ├── 04_evaluation_visualization.md
 │   ├── 05_inference_deployment.md
+│   ├── 06_multitarget_realtime_detection.md
 │   └── 99_troubleshooting_checklist.md ← 强烈建议看
 ├── env/
 │   ├── setup_autodl.sh             ← AutoDL 一键环境搭建
@@ -56,6 +57,7 @@ fall-detection/
 │   ├── extract_pose_yolo26.py      ← YOLO26-Pose 提取骨骼
 │   ├── pose_to_pyskl_format.py     ← 关键点 → MMAction2 格式
 │   ├── realtime_demo.py            ← 实时摄像头/视频演示
+│   ├── multitarget_realtime_demo.py ← 多目标实时摔倒检测
 │   └── batch_predict.py            ← 批量视频推理
 └── scripts/
     └── run_all.sh                  ← 一键串联流程
