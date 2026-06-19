@@ -361,3 +361,96 @@ git -c http.proxy=http://127.0.0.1:7892 -c https.proxy=http://127.0.0.1:7892 pus
 ```
 
 * 推送结果：`main -> main`，GitHub 已包含本次新增的多目标实时检测文档和推理脚本。
+
+## 8. 2026-06-20 PoseConv3D 训练完成与测试评估
+
+**执行人:** Codex  
+**服务器目录:** `/root/autodl-tmp/fall-detection`
+
+### 8.1 训练完成状态
+
+* 主线模型 `configs/posec3d_fall_binary.py` 已完成 24 epoch 训练。
+* 训练未修改技术文档、模型配置、数据文件或训练逻辑。
+* 训练完成时 GPU 已空闲，`nvidia-smi` 显示显存占用约 1 MiB。
+* 最后一轮验证结果：
+
+```text
+Epoch(val) [24][52/52] acc/top1: 1.0000 acc/mean1: 1.0000
+```
+
+* 保留 checkpoint：
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+work_dirs/posec3d_fall_binary/epoch_22.pth
+work_dirs/posec3d_fall_binary/epoch_23.pth
+work_dirs/posec3d_fall_binary/epoch_24.pth
+```
+
+### 8.2 checkpoint 一致性检查
+
+已执行：
+
+```bash
+python tools/verify_best_ckpt.py work_dirs/posec3d_fall_binary
+```
+
+结果：
+
+* 找到 1 个 `best_*.pth` 和最近 3 个普通 epoch checkpoint。
+* 日志中最高验证集 `acc/top1=1.0000`，首次出现在 epoch 5。
+* `best_acc_top1_epoch_5.pth` 与日志最高验证结果一致。
+* epoch 22、23、24 在验证日志中也达到过 `acc/top1=1.0000`，但由于 checkpoint hook 使用 `rule="greater"`，与历史 best 打平不会覆盖 epoch 5 的 best 文件。
+
+### 8.3 测试集评估结果
+
+测试集为当前配置的 `xsub_val`，样本数 825，其中摔倒 275、非摔倒 550。已对 `best` 和最近三轮 checkpoint 分别执行：
+
+```bash
+bash tools/test.sh configs/posec3d_fall_binary.py <checkpoint>
+python tools/eval_binary_metrics.py --pred <pred.pkl> --config configs/posec3d_fall_binary.py --out-dir <eval_dir> --save-errors
+```
+
+汇总结果：
+
+| Checkpoint | Accuracy | Precision | Recall | Specificity | F1 | ROC AUC | PR AUC | 默认阈值误判 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `best_acc_top1_epoch_5.pth` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0 |
+| `epoch_22.pth` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0 |
+| `epoch_23.pth` | 0.9988 | 1.0000 | 0.9964 | 1.0000 | 0.9982 | 1.0000 | 1.0000 | 1 个 FN |
+| `epoch_24.pth` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0 |
+
+`epoch_23.pth` 默认阈值 0.5 下漏报 1 个摔倒样本：
+
+```text
+sample_130, gt=1, pred=0, fall_score=0.4759, FN
+```
+
+但阈值搜索显示 `epoch_23.pth` 也可通过调整阈值达到 F1=1.0000。
+
+### 8.4 当前结论
+
+* 本轮 PoseConv3D 训练产物可用，暂时没有必要因为 epoch 5 作为 best 而立即重训。
+* 推荐优先保留并用于后续推理联调的 checkpoint：`work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth`。
+* 同时建议保留 `epoch_24.pth` 作为末轮对照模型，因为它在默认阈值下测试指标同样全为 1.0000。
+* 需要注意：当前测试仍使用项目配置内的 `xsub_val`，结果非常高，后续若要确认泛化能力，应补充新的真实视频、摄像头采样或独立场景数据做外部测试。
+
+### 8.5 服务器产物路径
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5_pred.pkl
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5_metrics.txt
+work_dirs/posec3d_fall_binary/eval_best_acc_top1_epoch_5/
+
+work_dirs/posec3d_fall_binary/epoch_22_pred.pkl
+work_dirs/posec3d_fall_binary/epoch_22_metrics.txt
+work_dirs/posec3d_fall_binary/eval_epoch_22/
+
+work_dirs/posec3d_fall_binary/epoch_23_pred.pkl
+work_dirs/posec3d_fall_binary/epoch_23_metrics.txt
+work_dirs/posec3d_fall_binary/eval_epoch_23/
+
+work_dirs/posec3d_fall_binary/epoch_24_pred.pkl
+work_dirs/posec3d_fall_binary/epoch_24_metrics.txt
+work_dirs/posec3d_fall_binary/eval_epoch_24/
+```
