@@ -581,12 +581,26 @@ class MultiTrackFallDetector:
         return list(self.tracks.values())
 
     def visible_snapshot(self, frame_idx: int, max_age_frames: int = 0) -> List[TrackState]:
-        """Return tracks recently observed enough to draw on the current frame."""
+        """Return tracks that should be drawn without dropping active fall boxes."""
         max_age_frames = max(0, int(max_age_frames))
-        return [
-            st for st in self.tracks.values()
-            if frame_idx - st.last_seen_frame <= max_age_frames
-        ]
+        visible = []
+        for st in self.tracks.values():
+            age = frame_idx - st.last_seen_frame
+            if age <= max_age_frames:
+                visible.append(st)
+                continue
+            must_draw_fall = (
+                st.alerted
+                or st.alert_frames_left > 0
+                or st.smoothed_prob >= self.threshold
+                or (
+                    self.pose_heuristic is not None
+                    and st.heuristic_score >= self.pose_heuristic_thr
+                )
+            )
+            if must_draw_fall and age <= self.track_timeout:
+                visible.append(st)
+        return visible
 
     @property
     def active_count(self) -> int:
