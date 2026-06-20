@@ -76,7 +76,7 @@ from inference.extract_pose_yolo26 import load_pose_model, _extract_one_frame
 from inference.pose_to_pyskl_format import build_sample
 from inference.batch_predict import load_action_model, predict_clip as _predict_clip_fallback
 from inference.realtime_core import (
-    TimeAwareBuffer, TrackMerger, AlertPolicy,
+    TimeAwareBuffer, TrackMerger, AlertPolicy, bbox_iou, bbox_center_dist_norm,
     ProbabilityLogger, VideoSummaryBuilder,
 )
 
@@ -206,6 +206,20 @@ class TrackState:
         self.smoothed_prob = float(tomb.last_smoothed_prob)
         self.over_thr_streak = int(tomb.over_thr_streak)
 
+    def adopt_state(self, other: "TrackState"):
+        """从刚断开的 active track 继承状态,用于处理同帧/短间隔 ID 切换。"""
+        if other is None:
+            return
+        self.buffer.inherit_from(other.buffer)
+        self.last_prob = float(other.last_prob)
+        self.smoothed_prob = float(other.smoothed_prob)
+        self.over_thr_streak = int(other.over_thr_streak)
+        self.recent_raw_probs.extend(list(other.recent_raw_probs))
+        self.alerted = bool(other.alerted)
+        self.alert_frames_left = int(other.alert_frames_left)
+        self.ever_alerted = bool(other.ever_alerted)
+        self.last_alert_reason = str(other.last_alert_reason or "")
+
 
 # ============================================================
 # 多目标检测器(集成 TrackMerger / AlertPolicy / ProbLogger / Summary)
@@ -275,9 +289,75 @@ class MultiTrackFallDetector:
         )
 
     # --------------------------------------------------------
+    def _try_adopt_recent_inactive_track(
+        self,
+        st: TrackState,
+        new_tid: int,
+        new_bbox: np.ndarray,
+        frame_idx: int,
+        img_diag: float,
+        current_ids: set,
+    ):
+        """让新 ID 直接继承刚刚断开的 active track。
+
+        旧逻辑只有 track 超过 timeout 被清理时才进入 tombstone,但快速摔倒时新 ID
+        往往在旧 ID 刚消失的 1-2 帧内出现,此时旧 track 仍在 self.tracks 中。
+        这里直接匹配这些最近未出现的 active tracks,解决同帧/短间隔 ID switch。
+        """
+        if self.track_merger is None:
+            return None
+
+        best_tid = None
+        best_st = None
+        best_score = 0.0
+        best_reason = None
+
+        for old_tid, old_st in self.tracks.items():
+            if old_tid == new_tid or old_tid in current_ids:
+                continue
+            gap = frame_idx - old_st.last_seen_frame
+            if gap < 0 or gap > self.track_merger.max_gap_frames:
+                continue
+
+            iou = bbox_iou(old_st.bbox, new_bbox)
+            dist = bbox_center_dist_norm(old_st.bbox, new_bbox, img_diag)
+            score = 0.0
+            reason = None
+            if iou >= self.track_merger.iou_thr:
+                score = iou
+                reason = f"active_iou={iou:.2f}"
+            elif dist <= self.track_merger.center_dist_norm_thr:
+                score = max(0.0, 1.0 - dist / max(self.track_merger.center_dist_norm_thr, 1e-6))
+                reason = f"active_dist={dist:.3f}"
+
+            if score > best_score:
+                best_tid = old_tid
+                best_st = old_st
+                best_score = score
+                best_reason = reason
+
+        if best_st is None:
+            return None
+
+        st.adopt_state(best_st)
+        self.track_merger.merge_log.append({
+            "frame": frame_idx,
+            "new_track_id": int(new_tid),
+            "inherited_from": int(best_tid),
+            "reason": best_reason,
+        })
+        del self.tracks[best_tid]
+        return best_tid
+
+    # --------------------------------------------------------
     def update(self, frame_idx, kpts, scores, bboxes, track_ids, img_shape, frame=None):
         H, W = img_shape
         img_diag = float(np.hypot(H, W))
+        current_ids = {
+            int(tid)
+            for i, tid in enumerate(track_ids)
+            if int(tid) >= 0 and np.any(kpts[i])
+        }
         seen_now = set()
 
         # 1. 喂数据 + 尝试 track 合并
@@ -294,12 +374,21 @@ class MultiTrackFallDetector:
             if tid not in self.tracks:
                 st = self._new_track(tid)
                 if self.track_merger is not None:
-                    tomb = self.track_merger.try_match(
-                        new_track_id=tid, new_bbox=bboxes[i],
-                        current_frame=frame_idx, img_diag=img_diag,
+                    adopted_tid = self._try_adopt_recent_inactive_track(
+                        st=st,
+                        new_tid=tid,
+                        new_bbox=bboxes[i],
+                        frame_idx=frame_idx,
+                        img_diag=img_diag,
+                        current_ids=current_ids,
                     )
-                    if tomb is not None:
-                        st.adopt(tomb)
+                    if adopted_tid is None:
+                        tomb = self.track_merger.try_match(
+                            new_track_id=tid, new_bbox=bboxes[i],
+                            current_frame=frame_idx, img_diag=img_diag,
+                        )
+                        if tomb is not None:
+                            st.adopt(tomb)
                 self.tracks[tid] = st
 
             self.tracks[tid].push(kpt, scr, bboxes[i], frame_idx)

@@ -304,3 +304,54 @@ Interpretation:
 * `test5.mp4` and `test6.mp4` remain clear detections, with max `P(fall)` near 1.0.
 * `test4.mp4` and `test7.mp4` remain missed even after a 1.6-second time window and more sensitive alert policy; their max probabilities are very low, so they should be treated as `model_unaware` hard positives rather than simple threshold misses.
 * Next model-improvement step should be fine-tuning with real hard-positive samples such as `test4.mp4` and `test7.mp4`, plus hard negatives. When starting any future training/fine-tuning run on the server, use `screen` so the web terminal can attach to the progress, for example `screen -S falldet-finetune` and `screen -x falldet-finetune`.
+
+Additional real-video diagnostic rerun:
+
+* Date: 2026-06-20.
+* User confirmation: all 4 videos in this additional batch are fall positives.
+* Server output directory:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056
+```
+
+* Output size: about 465 MB.
+* The old test4567 overlay mp4 files were removed from prior output folders to avoid confusion and save space. Diagnostic CSV/JSON/probability logs/curves were kept. No training artifacts, model checkpoints, `work_dirs/`, or dataset files were deleted.
+* Parameters were the same recommended inference strategy:
+
+```text
+checkpoint: work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+time_window_sec: 1.6
+track_merge: true
+threshold: 0.45
+high_thr: 0.7
+topk_mean_thr: 0.5
+infer_every: 2
+max_persons: 5
+```
+
+| Video | Ground truth | Diagnosis | Detection | Max P(fall) | Mean top5 P(fall) |
+| --- | --- | --- | --- | ---: | ---: |
+| `2026-06-20 035837.mp4` | fall | `detected` | detected | 0.9966 | 0.9959 |
+| `test1.mp4` | fall | `partial_signal` | missed | 0.4460 | 0.3473 |
+| `test2.mp4` | fall | `detected` | detected | 0.9996 | 0.9993 |
+| `test3.mp4` | fall | `detected` | detected | 0.9999 | 0.9999 |
+
+Metric summary under the all-positive label assumption:
+
+```text
+TP=3
+FP=0
+TN=0
+FN=1
+accuracy=0.7500
+precision=1.0000
+recall=0.7500
+f1=0.8571
+```
+
+Interpretation:
+
+* The upgraded inference strategy detects 3 of these 4 additional fall-positive videos.
+* `test1.mp4` is a partial-signal miss rather than a full model-unaware miss: max `P(fall)=0.4460`, just below the current `threshold=0.45`.
+* Across the 8 real fall-positive videos processed so far with the upgraded strategy, detections are 5/8. The strongest fine-tuning candidates remain `test4.mp4` and `test7.mp4` because their probabilities stay very low; `test1.mp4` may be recoverable by threshold/alert-policy tuning or fine-tuning.

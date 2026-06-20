@@ -956,3 +956,92 @@ f1: 0.6667
 * `test4/test7` 即使使用 1.6 秒时间窗口、track merge、低阈值和 top-k 策略，最高 `P(fall)` 仍低于 0.12，属于模型不识别而不是阈值/去抖问题。
 * 后续应把 `test4/test7` 作为真实困难正样本，配合真实困难负样本做微调；不建议继续只靠阈值扫描解决这两个样本。
 * 下次启动训练时必须使用 `screen`，例如 `screen -S falldet-finetune`，方便网页端通过 `screen -x falldet-finetune` 查看训练进度。
+
+### 10.9 test1-test3 与额外真实视频服务器复测结果
+
+按用户要求，暂不重训；继续处理 `data/real_test` 中除 `test4-test7` 之外的真实视频。用户确认这 4 个视频也全部为摔倒正样本。
+
+本次先删除旧 test4567 输出中的 overlay mp4，释放空间并避免混淆，但保留诊断证据文件：
+
+* 已删除：
+  * `/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749/overlays/*.mp4`
+  * `/root/autodl-tmp/fall-detection/outputs/real_test_overlay_test4567_20260620_044418/videos/*.mp4`
+* 已保留：
+  * `summary.csv`
+  * `failure_cases.csv`
+  * `metrics.json`
+  * `probs/*.jsonl`
+  * `curves/*.png`
+  * `summaries/*.json`
+  * snapshots 和事件日志
+
+本次输入视频：
+
+```text
+data/real_test/2026-06-20 035837.mp4
+data/real_test/test1.mp4
+data/real_test/test2.mp4
+data/real_test/test3.mp4
+```
+
+运行参数沿用推荐策略：
+
+```bash
+python tools/run_real_video_eval.py \
+    --video-dir /tmp/falldet_other_inputs \
+    --config configs/posec3d_fall_binary.py \
+    --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+    --out-dir outputs/real_eval/other_tests_recommended_20260620_160056 \
+    --time-window-sec 1.6 \
+    --track-merge \
+    --threshold 0.45 \
+    --high-thr 0.7 \
+    --topk-mean-thr 0.5 \
+    --infer-every 2 \
+    --max-persons 5
+```
+
+输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056
+```
+
+该目录约 `465 MB`，包含 overlay、events、probs、curves、summaries、`summary.csv`、`failure_cases.csv`、`metrics_all_fall.json` 和 `summary_all_fall.csv`。
+
+按用户确认的全部正样本计算指标：
+
+```text
+TP=3
+FP=0
+TN=0
+FN=1
+accuracy=0.75
+precision=1.0
+recall=0.75
+f1=0.8571
+```
+
+逐视频结果：
+
+| Video | GT | Diagnosis | Alerts | Max P(fall) | Mean top5 P(fall) | Notes |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| `2026-06-20 035837.mp4` | 1 | `detected` | 8 | 0.9966 | 0.9959 | 检出 |
+| `test1.mp4` | 1 | `partial_signal` | 0 | 0.4460 | 0.3473 | 漏检，接近阈值但未触发 |
+| `test2.mp4` | 1 | `detected` | 5 | 0.9996 | 0.9993 | 检出 |
+| `test3.mp4` | 1 | `detected` | 11 | 0.9999 | 0.9999 | 检出 |
+
+概率曲线已生成：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056/curves/2026-06-20 035837.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056/curves/test1.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056/curves/test2.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/other_tests_recommended_20260620_160056/curves/test3.png
+```
+
+结论：
+
+* 除 `test1` 外，其余 3 个额外正样本均被检出。
+* `test1` 与 `test4/test7` 不同，不是完全 `model_unaware`，而是 `partial_signal`：最高 `P(fall)=0.4460`，接近当前 `threshold=0.45`，后续可通过更低阈值、top-k 策略或微调进一步处理。
+* 当前真实正样本合并看：`test4-test7` 推荐策略检出 2/4，本轮额外视频检出 3/4；合计 5/8。
