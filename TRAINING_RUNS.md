@@ -533,3 +533,40 @@ max_pose_heuristic=1.0
 ```
 
 This rerun also used `model + pose_heuristic logic fallback`; it should be compared against a future model-only ablation if used in the paper.
+
+## Artifact Retention Update - 2026-06-20
+
+The completed PoseConv3D training run artifacts are now intended to be tracked in Git:
+
+```text
+work_dirs/posec3d_fall_binary/
+```
+
+Important checkpoint files:
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+work_dirs/posec3d_fall_binary/epoch_22.pth
+work_dirs/posec3d_fall_binary/epoch_23.pth
+work_dirs/posec3d_fall_binary/epoch_24.pth
+```
+
+The recommended deployment checkpoint remains:
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+```
+
+`epoch_24.pth` remains the final-epoch comparison checkpoint. `epoch_22.pth` and `epoch_23.pth` are retained because their validation/test performance was also effectively saturated and they are useful for post-training comparison.
+
+Large non-training artifacts are intentionally not tracked in normal Git:
+
+```text
+data/
+outputs/
+yolo26x-pose.pt
+mmaction2_src/
+vis/
+```
+
+See `ARTIFACTS_MANIFEST.md` for restore boundaries and the local server backup tarball path.

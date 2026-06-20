@@ -1257,3 +1257,52 @@ mean_top5_pose_heuristic: 1.0
 * 这是 `model + pose_heuristic logic fallback` 部署版本结果。
 * 该视频包含多段摔倒和多 track；既有红色 `MODEL FALL`，也有紫色 `LOGIC FALL`。
 * 后续如需论文中的纯模型对照，应另跑一份不加 `--pose-heuristic-alert` 的 `model-only` 输出。
+
+### 10.14 拼接视频残留骨架显示修复
+
+用户反馈：拼接视频切换片段后，上一段中已经消失的人仍会在原位置残留骨架框，同时新片段里的人会以另一个 ID 出现。
+
+原因定位：多人 track 内部会保留一段 `track_timeout`，用于 ID switch 合并和动作窗口连续性；但 overlay 绘制时直接使用了全部 `detector.snapshot()`，导致“内部保留但当前帧未观测到”的旧 track 也被画出来。
+
+修复：
+
+```text
+inference/multitarget_realtime_demo.py
+```
+
+* 新增 `MultiTrackFallDetector.visible_snapshot(frame_idx, max_age_frames=0)`。
+* 新增 CLI 参数 `--draw-track-max-age`，默认 `0`，表示只绘制当前帧真实观测到的 track。
+* 主循环 overlay 改为绘制 `visible_tracks`，HUD 的 active 数也改为当前可见 track 数。
+* 内部 stale track 仍保留给 ID 合并和动作缓冲，不影响已有 `--track-merge` 策略。
+
+预期效果：拼接视频切到下一段后，旧片段人物不会继续残留在画面上；若需要更宽松的显示，可把 `--draw-track-max-age` 设为 1 或 2。
+
+### 10.15 训练产物纳入 Git 恢复范围
+
+按用户要求，将服务器上“训练得到的包”同步到本地仓库并准备推送 GitHub。纳入普通 Git 的目录：
+
+```text
+work_dirs/posec3d_fall_binary/
+```
+
+包含：
+
+```text
+best_acc_top1_epoch_5.pth
+epoch_22.pth
+epoch_23.pth
+epoch_24.pth
+训练日志 / 测试日志 / 预测 pkl / 评估图 / config 快照
+```
+
+未纳入普通 Git：
+
+```text
+data/
+outputs/
+yolo26x-pose.pt
+mmaction2_src/
+vis/
+```
+
+原因：这些是上游可下载/可再生成内容或大体积输出，其中 `yolo26x-pose.pt` 超过 GitHub 普通单文件 100 MB 限制。已新增 `ARTIFACTS_MANIFEST.md` 记录恢复边界和本地备份包位置。

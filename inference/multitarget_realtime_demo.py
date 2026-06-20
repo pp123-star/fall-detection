@@ -580,6 +580,14 @@ class MultiTrackFallDetector:
     def snapshot(self) -> List[TrackState]:
         return list(self.tracks.values())
 
+    def visible_snapshot(self, frame_idx: int, max_age_frames: int = 0) -> List[TrackState]:
+        """Return tracks recently observed enough to draw on the current frame."""
+        max_age_frames = max(0, int(max_age_frames))
+        return [
+            st for st in self.tracks.values()
+            if frame_idx - st.last_seen_frame <= max_age_frames
+        ]
+
     @property
     def active_count(self) -> int:
         return len(self.tracks)
@@ -919,9 +927,12 @@ def run_multitarget_realtime(args):
             loop_ms = (time.time() - t_loop) * 1000
             fps_hist.append(1000.0 / max(loop_ms, 1e-6))
             cur_fps = float(np.mean(fps_hist))
+            visible_tracks = detector.visible_snapshot(
+                frame_idx, max_age_frames=args.draw_track_max_age
+            )
             draw_multitrack_overlay(
-                frame, detector.snapshot(), args.threshold, args.kpt_thr,
-                cur_fps, detector.last_infer_ms, detector.active_count,
+                frame, visible_tracks, args.threshold, args.kpt_thr,
+                cur_fps, detector.last_infer_ms, len(visible_tracks),
                 len(detector.alerted_ids), noid_dets=noid_dets,
             )
 
@@ -1024,6 +1035,8 @@ def build_argparser():
     p.add_argument("--infer-every", type=int, default=6)
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--track-timeout", type=int, default=30)
+    p.add_argument("--draw-track-max-age", type=int, default=0,
+                   help="只绘制最近 N 帧内被重新观测到的 track；0 表示只画当前帧，避免拼接视频残留骨架")
 
     # Track 合并(ID switch 处理)
     p.add_argument("--track-merge", action="store_true",

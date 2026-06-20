@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+
+# Local/user test files and generated outputs.
+test_video/
+outputs/
+vis/
+
+# Datasets and downloadable third-party weights are kept outside normal Git.
+data/
+mmaction2_src/
+yolo*.pt
+*.tar
+*.tar.gz
+*.zip
+
+# Keep the selected training run artifacts, ignore other future work dirs by default.
+work_dirs/*
+!work_dirs/posec3d_fall_binary/
+!work_dirs/posec3d_fall_binary/**

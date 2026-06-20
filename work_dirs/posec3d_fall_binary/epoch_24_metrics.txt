@@ -1,0 +1,56 @@
+/root/autodl-tmp/fall-detection/tools/eval_binary_metrics.py:66: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  label = int(label.cpu().numpy())
+======================================================================
+预测文件: work_dirs/posec3d_fall_binary/epoch_24_pred.pkl
+配置: configs/posec3d_fall_binary.py
+======================================================================
+样本数: 825
+正样本数(摔倒): 275
+负样本数(非摔倒): 550
+模型输出分数 shape: (825, 2)
+
+======================================================================
+[Threshold = 0.5] 默认阈值评估
+======================================================================
+Accuracy:    1.0000
+Precision:   1.0000
+Recall (摔倒检出率):    1.0000
+Specificity (非摔倒识别率): 1.0000
+FPR (误报率): 0.0000
+F1:          1.0000
+
+           预测=非摔倒   预测=摔倒
+实际=非摔倒         550            0
+实际=摔倒             0          275
+
+======================================================================
+[Threshold Search] 寻找最佳阈值
+======================================================================
+按 F1 最大: threshold = 0.370, F1 = 1.0000
+按 Youden's J: threshold = 0.370, J = 1.0000
+
+按最佳 F1 阈值的指标:
+  Accuracy: 1.0000, P: 1.0000, R: 1.0000, F1: 1.0000, FPR: 0.0000
+
+======================================================================
+[AUC & 曲线]
+======================================================================
+[INFO] ROC/PR 曲线保存到 work_dirs/posec3d_fall_binary/eval_epoch_24/
+ROC AUC: 1.0000
+PR AUC (AP): 1.0000
+[INFO] 混淆矩阵保存到 work_dirs/posec3d_fall_binary/eval_epoch_24/confusion_matrix.png
+
+======================================================================
+[论文汇总表]
+======================================================================
+Metric               Value
+------------------------------
+Accuracy            1.0000
+Precision           1.0000
+Recall              1.0000
+Specificity         1.0000
+F1                  1.0000
+ROC AUC             1.0000
+PR AUC              1.0000
+FPR                 0.0000
+======================================================================

@@ -1,0 +1,885 @@
+2026/06/20 00:51:03 - mmengine - INFO - 
+------------------------------------------------------------
+System environment:
+    sys.platform: linux
+    Python: 3.10.20 (main, Jun 11 2026, 15:17:37) [GCC 14.3.0]
+    CUDA available: True
+    MUSA available: False
+    numpy_random_seed: 42
+    GPU 0: NVIDIA GeForce RTX 4090
+    CUDA_HOME: /usr/local/cuda
+    NVCC: Cuda compilation tools, release 12.1, V12.1.105
+    GCC: gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0
+    PyTorch: 2.1.0+cu118
+    PyTorch compiling details: PyTorch built with:
+  - GCC 9.3
+  - C++ Version: 201703
+  - Intel(R) oneAPI Math Kernel Library Version 2022.2-Product Build 20220804 for Intel(R) 64 architecture applications
+  - Intel(R) MKL-DNN v3.1.1 (Git Hash 64f6bcbcbab628e96f33a62c3e975f8535a7bde4)
+  - OpenMP 201511 (a.k.a. OpenMP 4.5)
+  - LAPACK is enabled (usually provided by MKL)
+  - NNPACK is enabled
+  - CPU capability usage: AVX512
+  - CUDA Runtime 11.8
+  - NVCC architecture flags: -gencode;arch=compute_50,code=sm_50;-gencode;arch=compute_60,code=sm_60;-gencode;arch=compute_70,code=sm_70;-gencode;arch=compute_75,code=sm_75;-gencode;arch=compute_80,code=sm_80;-gencode;arch=compute_86,code=sm_86;-gencode;arch=compute_37,code=sm_37;-gencode;arch=compute_90,code=sm_90
+  - CuDNN 8.7
+  - Magma 2.6.1
+  - Build settings: BLAS_INFO=mkl, BUILD_TYPE=Release, CUDA_VERSION=11.8, CUDNN_VERSION=8.7.0, CXX_COMPILER=/opt/rh/devtoolset-9/root/usr/bin/c++, CXX_FLAGS= -D_GLIBCXX_USE_CXX11_ABI=0 -fabi-version=11 -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -DNDEBUG -DUSE_KINETO -DLIBKINETO_NOROCTRACER -DUSE_FBGEMM -DUSE_QNNPACK -DUSE_PYTORCH_QNNPACK -DUSE_XNNPACK -DSYMBOLICATE_MOBILE_DEBUG_HANDLE -O2 -fPIC -Wall -Wextra -Werror=return-type -Werror=non-virtual-dtor -Werror=bool-operation -Wnarrowing -Wno-missing-field-initializers -Wno-type-limits -Wno-array-bounds -Wno-unknown-pragmas -Wno-unused-parameter -Wno-unused-function -Wno-unused-result -Wno-strict-overflow -Wno-strict-aliasing -Wno-stringop-overflow -Wno-psabi -Wno-error=pedantic -Wno-error=old-style-cast -Wno-invalid-partial-specialization -Wno-unused-private-field -Wno-aligned-allocation-unavailable -Wno-missing-braces -fdiagnostics-color=always -faligned-new -Wno-unused-but-set-variable -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Werror=cast-function-type -Wno-stringop-overflow, LAPACK_INFO=mkl, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, PERF_WITH_AVX512=1, TORCH_DISABLE_GPU_ASSERTS=ON, TORCH_VERSION=2.1.0, USE_CUDA=ON, USE_CUDNN=ON, USE_EXCEPTION_PTR=1, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_MKL=ON, USE_MKLDNN=ON, USE_MPI=OFF, USE_NCCL=1, USE_NNPACK=ON, USE_OPENMP=ON, USE_ROCM=OFF, 
+
+    TorchVision: 0.16.0+cu118
+    OpenCV: 4.8.1
+    MMEngine: 0.10.7
+
+Runtime environment:
+    cudnn_benchmark: False
+    mp_cfg: {'mp_start_method': 'fork', 'opencv_num_threads': 0}
+    dist_cfg: {'backend': 'nccl'}
+    seed: 42
+    diff_rank_seed: False
+    deterministic: True
+    Distributed launcher: none
+    Distributed training: False
+    GPU number: 1
+------------------------------------------------------------
+
+2026/06/20 00:51:03 - mmengine - INFO - Config:
+ann_file = 'data/fall_binary_xsub.pkl'
+clip_len = 48
+dataset_type = 'PoseDataset'
+default_hooks = dict(
+    checkpoint=dict(
+        interval=1,
+        max_keep_ckpts=3,
+        rule='greater',
+        save_best='acc/top1',
+        save_last=True,
+        type='CheckpointHook'),
+    logger=dict(ignore_last=False, interval=20, type='LoggerHook'),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+    runtime_info=dict(type='RuntimeInfoHook'),
+    sampler_seed=dict(type='DistSamplerSeedHook'),
+    sync_buffers=dict(type='SyncBuffersHook'),
+    timer=dict(type='IterTimerHook'))
+default_scope = 'mmaction'
+env_cfg = dict(
+    cudnn_benchmark=False,
+    dist_cfg=dict(backend='nccl'),
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
+heatmap_size = 56
+launcher = 'none'
+left_kp = [
+    1,
+    3,
+    5,
+    7,
+    9,
+    11,
+    13,
+    15,
+]
+load_from = None
+log_level = 'INFO'
+log_processor = dict(by_epoch=True, type='LogProcessor', window_size=20)
+model = dict(
+    backbone=dict(
+        base_channels=32,
+        conv1_stride_s=1,
+        depth=50,
+        dilations=(
+            1,
+            1,
+            1,
+        ),
+        in_channels=17,
+        inflate=(
+            0,
+            1,
+            1,
+        ),
+        num_stages=3,
+        out_indices=(2, ),
+        pool1_stride_s=1,
+        pretrained=None,
+        spatial_strides=(
+            2,
+            2,
+            2,
+        ),
+        stage_blocks=(
+            4,
+            6,
+            3,
+        ),
+        temporal_strides=(
+            1,
+            1,
+            2,
+        ),
+        type='ResNet3dSlowOnly'),
+    cls_head=dict(
+        average_clips='prob',
+        dropout_ratio=0.5,
+        in_channels=512,
+        num_classes=2,
+        spatial_type='avg',
+        type='I3DHead'),
+    test_cfg=dict(average_clips='prob'),
+    type='Recognizer3D')
+optim_wrapper = dict(
+    clip_grad=dict(max_norm=40, norm_type=2),
+    optimizer=dict(
+        lr=0.2, momentum=0.9, nesterov=True, type='SGD', weight_decay=0.0003),
+    type='OptimWrapper')
+param_scheduler = [
+    dict(
+        T_max=24,
+        by_epoch=True,
+        convert_to_iter_based=True,
+        eta_min=0,
+        type='CosineAnnealingLR'),
+]
+randomness = dict(deterministic=True, diff_rank_seed=False, seed=42)
+resume = False
+right_kp = [
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+]
+split_train = 'xsub_train'
+split_val = 'xsub_val'
+test_cfg = dict(type='TestLoop')
+test_dataloader = dict(
+    batch_size=1,
+    dataset=dict(
+        ann_file='data/fall_binary_xsub.pkl',
+        pipeline=[
+            dict(
+                clip_len=48,
+                num_clips=10,
+                test_mode=True,
+                type='UniformSampleFrames'),
+            dict(type='PoseDecode'),
+            dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+            dict(scale=(
+                -1,
+                64,
+            ), type='Resize'),
+            dict(crop_size=64, type='CenterCrop'),
+            dict(keep_ratio=False, scale=(
+                56,
+                56,
+            ), type='Resize'),
+            dict(
+                sigma=0.6,
+                type='GeneratePoseTarget',
+                use_score=True,
+                with_kp=True,
+                with_limb=False),
+            dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+            dict(type='PackActionInputs'),
+        ],
+        split='xsub_val',
+        test_mode=True,
+        type='PoseDataset'),
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=False, type='DefaultSampler'))
+test_evaluator = dict(
+    metric_options=dict(
+        mean_class_accuracy=dict(), top_k_accuracy=dict(topk=(1, ))),
+    type='AccMetric')
+test_pipeline = [
+    dict(
+        clip_len=48, num_clips=10, test_mode=True, type='UniformSampleFrames'),
+    dict(type='PoseDecode'),
+    dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+    dict(scale=(
+        -1,
+        64,
+    ), type='Resize'),
+    dict(crop_size=64, type='CenterCrop'),
+    dict(keep_ratio=False, scale=(
+        56,
+        56,
+    ), type='Resize'),
+    dict(
+        sigma=0.6,
+        type='GeneratePoseTarget',
+        use_score=True,
+        with_kp=True,
+        with_limb=False),
+    dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+    dict(type='PackActionInputs'),
+]
+total_epochs = 24
+train_cfg = dict(
+    max_epochs=24, type='EpochBasedTrainLoop', val_begin=1, val_interval=1)
+train_dataloader = dict(
+    batch_size=16,
+    dataset=dict(
+        dataset=dict(
+            ann_file='data/fall_binary_xsub.pkl',
+            pipeline=[
+                dict(clip_len=48, type='UniformSampleFrames'),
+                dict(type='PoseDecode'),
+                dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+                dict(scale=(
+                    -1,
+                    64,
+                ), type='Resize'),
+                dict(area_range=(
+                    0.56,
+                    1.0,
+                ), type='RandomResizedCrop'),
+                dict(keep_ratio=False, scale=(
+                    56,
+                    56,
+                ), type='Resize'),
+                dict(
+                    flip_ratio=0.5,
+                    left_kp=[
+                        1,
+                        3,
+                        5,
+                        7,
+                        9,
+                        11,
+                        13,
+                        15,
+                    ],
+                    right_kp=[
+                        2,
+                        4,
+                        6,
+                        8,
+                        10,
+                        12,
+                        14,
+                        16,
+                    ],
+                    type='Flip'),
+                dict(
+                    sigma=0.6,
+                    type='GeneratePoseTarget',
+                    use_score=True,
+                    with_kp=True,
+                    with_limb=False),
+                dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+                dict(type='PackActionInputs'),
+            ],
+            split='xsub_train',
+            type='PoseDataset'),
+        times=10,
+        type='RepeatDataset'),
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=True, type='DefaultSampler'))
+train_pipeline = [
+    dict(clip_len=48, type='UniformSampleFrames'),
+    dict(type='PoseDecode'),
+    dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+    dict(scale=(
+        -1,
+        64,
+    ), type='Resize'),
+    dict(area_range=(
+        0.56,
+        1.0,
+    ), type='RandomResizedCrop'),
+    dict(keep_ratio=False, scale=(
+        56,
+        56,
+    ), type='Resize'),
+    dict(
+        flip_ratio=0.5,
+        left_kp=[
+            1,
+            3,
+            5,
+            7,
+            9,
+            11,
+            13,
+            15,
+        ],
+        right_kp=[
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            14,
+            16,
+        ],
+        type='Flip'),
+    dict(
+        sigma=0.6,
+        type='GeneratePoseTarget',
+        use_score=True,
+        with_kp=True,
+        with_limb=False),
+    dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+    dict(type='PackActionInputs'),
+]
+val_cfg = dict(type='ValLoop')
+val_dataloader = dict(
+    batch_size=16,
+    dataset=dict(
+        ann_file='data/fall_binary_xsub.pkl',
+        pipeline=[
+            dict(
+                clip_len=48,
+                num_clips=1,
+                test_mode=True,
+                type='UniformSampleFrames'),
+            dict(type='PoseDecode'),
+            dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+            dict(scale=(
+                -1,
+                64,
+            ), type='Resize'),
+            dict(crop_size=64, type='CenterCrop'),
+            dict(keep_ratio=False, scale=(
+                56,
+                56,
+            ), type='Resize'),
+            dict(
+                sigma=0.6,
+                type='GeneratePoseTarget',
+                use_score=True,
+                with_kp=True,
+                with_limb=False),
+            dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+            dict(type='PackActionInputs'),
+        ],
+        split='xsub_val',
+        test_mode=True,
+        type='PoseDataset'),
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=False, type='DefaultSampler'))
+val_evaluator = dict(
+    metric_options=dict(
+        mean_class_accuracy=dict(), top_k_accuracy=dict(topk=(1, ))),
+    type='AccMetric')
+val_pipeline = [
+    dict(clip_len=48, num_clips=1, test_mode=True, type='UniformSampleFrames'),
+    dict(type='PoseDecode'),
+    dict(allow_imgpad=True, hw_ratio=1.0, type='PoseCompact'),
+    dict(scale=(
+        -1,
+        64,
+    ), type='Resize'),
+    dict(crop_size=64, type='CenterCrop'),
+    dict(keep_ratio=False, scale=(
+        56,
+        56,
+    ), type='Resize'),
+    dict(
+        sigma=0.6,
+        type='GeneratePoseTarget',
+        use_score=True,
+        with_kp=True,
+        with_limb=False),
+    dict(input_format='NCTHW_Heatmap', type='FormatShape'),
+    dict(type='PackActionInputs'),
+]
+vis_backends = [
+    dict(type='LocalVisBackend'),
+]
+visualizer = dict(
+    type='ActionVisualizer', vis_backends=[
+        dict(type='LocalVisBackend'),
+    ])
+work_dir = 'work_dirs/posec3d_fall_binary'
+
+2026/06/20 00:51:06 - mmengine - INFO - Distributed training is not used, all SyncBatchNorm (SyncBN) layers in the model will be automatically reverted to BatchNormXd layers if they are used.
+2026/06/20 00:51:06 - mmengine - INFO - Hooks will be executed in the following order:
+before_run:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(BELOW_NORMAL) LoggerHook                         
+ -------------------- 
+before_train:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+(VERY_LOW    ) CheckpointHook                     
+ -------------------- 
+before_train_epoch:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+(NORMAL      ) DistSamplerSeedHook                
+ -------------------- 
+before_train_iter:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+ -------------------- 
+after_train_iter:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+(BELOW_NORMAL) LoggerHook                         
+(LOW         ) ParamSchedulerHook                 
+(VERY_LOW    ) CheckpointHook                     
+ -------------------- 
+after_train_epoch:
+(NORMAL      ) IterTimerHook                      
+(NORMAL      ) SyncBuffersHook                    
+(LOW         ) ParamSchedulerHook                 
+(VERY_LOW    ) CheckpointHook                     
+ -------------------- 
+before_val:
+(VERY_HIGH   ) RuntimeInfoHook                    
+ -------------------- 
+before_val_epoch:
+(NORMAL      ) IterTimerHook                      
+(NORMAL      ) SyncBuffersHook                    
+ -------------------- 
+before_val_iter:
+(NORMAL      ) IterTimerHook                      
+ -------------------- 
+after_val_iter:
+(NORMAL      ) IterTimerHook                      
+(BELOW_NORMAL) LoggerHook                         
+ -------------------- 
+after_val_epoch:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+(BELOW_NORMAL) LoggerHook                         
+(LOW         ) ParamSchedulerHook                 
+(VERY_LOW    ) CheckpointHook                     
+ -------------------- 
+after_val:
+(VERY_HIGH   ) RuntimeInfoHook                    
+ -------------------- 
+after_train:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(VERY_LOW    ) CheckpointHook                     
+ -------------------- 
+before_test:
+(VERY_HIGH   ) RuntimeInfoHook                    
+ -------------------- 
+before_test_epoch:
+(NORMAL      ) IterTimerHook                      
+ -------------------- 
+before_test_iter:
+(NORMAL      ) IterTimerHook                      
+ -------------------- 
+after_test_iter:
+(NORMAL      ) IterTimerHook                      
+(BELOW_NORMAL) LoggerHook                         
+ -------------------- 
+after_test_epoch:
+(VERY_HIGH   ) RuntimeInfoHook                    
+(NORMAL      ) IterTimerHook                      
+(BELOW_NORMAL) LoggerHook                         
+ -------------------- 
+after_test:
+(VERY_HIGH   ) RuntimeInfoHook                    
+ -------------------- 
+after_run:
+(BELOW_NORMAL) LoggerHook                         
+ -------------------- 
+2026/06/20 00:51:06 - mmengine - INFO - 2013 videos remain after valid thresholding
+2026/06/20 00:51:06 - mmengine - INFO - 825 videos remain after valid thresholding
+Name of parameter - Initialization information
+
+backbone.conv1.conv.weight - torch.Size([32, 17, 1, 7, 7]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.conv1.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.conv1.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.conv1.conv.weight - torch.Size([32, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.0.conv1.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.conv1.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.conv2.conv.weight - torch.Size([32, 32, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.0.conv2.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.conv2.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.conv3.conv.weight - torch.Size([128, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.0.conv3.bn.weight - torch.Size([128]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.0.conv3.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.downsample.conv.weight - torch.Size([128, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.0.downsample.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.0.downsample.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.1.conv1.conv.weight - torch.Size([32, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.1.conv1.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.1.conv1.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.1.conv2.conv.weight - torch.Size([32, 32, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.1.conv2.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.1.conv2.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.1.conv3.conv.weight - torch.Size([128, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.1.conv3.bn.weight - torch.Size([128]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.1.conv3.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.2.conv1.conv.weight - torch.Size([32, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.2.conv1.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.2.conv1.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.2.conv2.conv.weight - torch.Size([32, 32, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.2.conv2.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.2.conv2.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.2.conv3.conv.weight - torch.Size([128, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.2.conv3.bn.weight - torch.Size([128]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.2.conv3.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.3.conv1.conv.weight - torch.Size([32, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.3.conv1.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.3.conv1.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.3.conv2.conv.weight - torch.Size([32, 32, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.3.conv2.bn.weight - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.3.conv2.bn.bias - torch.Size([32]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer1.3.conv3.conv.weight - torch.Size([128, 32, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.3.conv3.bn.weight - torch.Size([128]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer1.3.conv3.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.conv1.conv.weight - torch.Size([64, 128, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.0.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.0.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.0.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.0.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.downsample.conv.weight - torch.Size([256, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.0.downsample.bn.weight - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.0.downsample.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.1.conv1.conv.weight - torch.Size([64, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.1.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.1.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.1.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.1.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.1.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.1.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.1.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.1.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.2.conv1.conv.weight - torch.Size([64, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.2.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.2.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.2.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.2.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.2.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.2.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.2.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.2.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.3.conv1.conv.weight - torch.Size([64, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.3.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.3.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.3.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.3.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.3.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.3.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.3.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.3.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.4.conv1.conv.weight - torch.Size([64, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.4.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.4.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.4.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.4.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.4.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.4.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.4.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.4.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.5.conv1.conv.weight - torch.Size([64, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.5.conv1.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.5.conv1.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.5.conv2.conv.weight - torch.Size([64, 64, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.5.conv2.bn.weight - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.5.conv2.bn.bias - torch.Size([64]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer2.5.conv3.conv.weight - torch.Size([256, 64, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.5.conv3.bn.weight - torch.Size([256]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer2.5.conv3.bn.bias - torch.Size([256]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.conv1.conv.weight - torch.Size([128, 256, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.0.conv1.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.conv1.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.conv2.conv.weight - torch.Size([128, 128, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.0.conv2.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.conv2.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.conv3.conv.weight - torch.Size([512, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.0.conv3.bn.weight - torch.Size([512]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.0.conv3.bn.bias - torch.Size([512]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.downsample.conv.weight - torch.Size([512, 256, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.0.downsample.bn.weight - torch.Size([512]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.0.downsample.bn.bias - torch.Size([512]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.1.conv1.conv.weight - torch.Size([128, 512, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.1.conv1.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.1.conv1.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.1.conv2.conv.weight - torch.Size([128, 128, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.1.conv2.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.1.conv2.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.1.conv3.conv.weight - torch.Size([512, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.1.conv3.bn.weight - torch.Size([512]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.1.conv3.bn.bias - torch.Size([512]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.2.conv1.conv.weight - torch.Size([128, 512, 3, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.2.conv1.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.2.conv1.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.2.conv2.conv.weight - torch.Size([128, 128, 1, 3, 3]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.2.conv2.bn.weight - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.2.conv2.bn.bias - torch.Size([128]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+backbone.layer3.2.conv3.conv.weight - torch.Size([512, 128, 1, 1, 1]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.2.conv3.bn.weight - torch.Size([512]): 
+Initialized by user-defined `init_weights` in ResNet3dSlowOnly  
+
+backbone.layer3.2.conv3.bn.bias - torch.Size([512]): 
+The value is the same before and after calling `init_weights` of Recognizer3D  
+
+cls_head.fc_cls.weight - torch.Size([2, 512]): 
+Initialized by user-defined `init_weights` in I3DHead  
+
+cls_head.fc_cls.bias - torch.Size([2]): 
+Initialized by user-defined `init_weights` in I3DHead  
+2026/06/20 00:51:07 - mmengine - WARNING - "FileClient" will be deprecated in future. Please use io functions in https://mmengine.readthedocs.io/en/latest/api/fileio.html#file-io
+2026/06/20 00:51:07 - mmengine - WARNING - "HardDiskBackend" is the alias of "LocalBackend" and the former will be deprecated in future.
+2026/06/20 00:51:07 - mmengine - INFO - Checkpoints will be saved to /root/autodl-tmp/fall-detection/work_dirs/posec3d_fall_binary.
