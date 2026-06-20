@@ -743,3 +743,62 @@ Recommended diagnostic settings for elderly surveillance clips with post-fall po
 ```
 
 This is an engineering fallback recorded as `track_lost_after_fall_pose`, not a pure PoseConv3D model prediction.
+
+### Same-Frame Split Track Merge Evaluation
+
+Commit:
+
+```text
+aa202df Merge same-frame split tracks
+```
+
+Purpose:
+
+* Fix the case where one falling person is split into two simultaneous track IDs.
+* Preserve existing tracking settings (`track_timeout=120`, `track_merge`, `lost_track_alert`) while adding `--track-merge-same-frame`.
+* Keep stale overlay suppression (`--draw-track-max-age 8`, `--draw-alert-max-age 15`) so old boxes do not pollute later frames.
+
+Server output:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_sameframe_merge_20260621_014000
+```
+
+Input:
+
+```text
+data/real_test/elder_fall
+12 videos
+```
+
+Checkpoint:
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+```
+
+Result summary:
+
+```text
+detected: 11/12
+partial_signal: 1/12
+metrics.json: {} because no labels CSV was supplied
+```
+
+Remaining problem case:
+
+```text
+elder_fall_7.mp4: partial_signal, max_pfall=0.361, max_pose_heuristic=0.4487
+```
+
+ID-switch handling examples:
+
+```text
+50_fall.MP4: num_id_switches_handled=15
+test8.mp4: num_id_switches_handled=61
+test9.mp4: num_id_switches_handled=44
+```
+
+Interpretation:
+
+This is still a deployment evaluation using model probability plus explicitly labeled engineering fallbacks. It is not a new training run and does not change the retained checkpoint policy.

@@ -1665,3 +1665,80 @@ _try_adopt_recent_inactive_track(...)
 * 被合并的旧碎片 track 从当前内部 tracks 中移除，避免 overlay 同时画出同一个人的两个框。
 
 这次修改不关闭或削弱现有 `track_timeout=120`、`track_merge`、`lost_track_alert`。它是对“同帧拆分”的补充，目标是让模型拿到更连续的摔倒动作输入，而不是只靠逻辑兜底。
+
+### 10.23 elder_fall 同帧接力版本重跑
+
+服务器已拉取：
+
+```text
+aa202df Merge same-frame split tracks
+```
+
+已用 `screen` 重跑 `data/real_test/elder_fall` 全目录 12 个视频，输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_sameframe_merge_20260621_014000
+```
+
+关键参数：
+
+```bash
+--time-window-sec 1.6 \
+--track-merge \
+--track-merge-same-frame \
+--track-merge-gap 45 \
+--track-timeout 120 \
+--draw-track-max-age 8 \
+--draw-alert-max-age 15 \
+--threshold 0.45 \
+--high-thr 0.7 \
+--topk-mean-thr 0.5 \
+--infer-every 2 \
+--max-persons 5 \
+--conf 0.15 \
+--imgsz 960 \
+--pose-heuristic-alert \
+--pose-heuristic-thr 0.62 \
+--lost-track-alert \
+--lost-track-min-gap 8 \
+--lost-track-heuristic-thr 0.45 \
+--lost-track-model-thr 0.35
+```
+
+运行结果：
+
+```text
+12 overlays
+12 summaries
+summary.csv / failure_cases.csv / metrics.json 均已生成
+metrics.json = {}，因为未提供 labels CSV
+```
+
+按部署诊断字段看：
+
+```text
+detected: 11/12
+partial_signal: 1/12
+```
+
+唯一问题视频：
+
+```text
+elder_fall_7.mp4: partial_signal, num_alerts=0, max_pfall=0.361, max_pose_heuristic=0.4487
+```
+
+其他重点结果：
+
+```text
+50_fall.MP4: detected, num_alerts=42, max_pfall=1.0, num_id_switches_handled=15
+elder_fall_4.mp4: detected, max_pfall=0.6474
+elder_fall_8.mp4: detected, max_pfall=0.1033, max_pose_heuristic=0.5756, num_id_switches_handled=1
+test8.mp4: detected, num_alerts=9, max_pfall=1.0, num_id_switches_handled=61
+test9.mp4: detected, num_alerts=8, max_pfall=1.0, num_id_switches_handled=44
+```
+
+解释：
+
+* 同帧接力主要针对“同一个人同一帧被拆成两个 ID”的情况，可以减少动作 clip 被切碎。
+* 对 `elder_fall_7` 仍未完全解决，说明该视频更接近模型/骨架信号都偏弱的困难样本；后续若要继续提高，需要单独调低逻辑阈值做部署兜底，或把它作为困难正样本进入微调数据。
+* 本次没有训练，也没有删除任何 checkpoint、训练目录或旧输出。
