@@ -96,6 +96,31 @@ COLOR_LOGIC_FALL = (220, 60, 220)
 COLOR_NOID = (160, 160, 160)
 
 
+def bbox_min_overlap(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    if a.size != 4 or b.size != 4:
+        return 0.0
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(0.0, (ax2 - ax1) * (ay2 - ay1))
+    area_b = max(0.0, (bx2 - bx1) * (by2 - by1))
+    denom = min(area_a, area_b)
+    return float(inter / denom) if denom > 1e-6 else 0.0
+
+
+def bbox_aspect(bbox: np.ndarray) -> float:
+    bbox = np.asarray(bbox, dtype=np.float32)
+    if bbox.size != 4:
+        return 0.0
+    w = max(float(bbox[2] - bbox[0]), 1.0)
+    h = max(float(bbox[3] - bbox[1]), 1.0)
+    return w / h
+
+
 # ============================================================
 # 带缓存的 clip predictor —— 已修复 v1 的两个 bug:
 #   • Compose 改用 mmengine.dataset.Compose
@@ -271,6 +296,7 @@ class MultiTrackFallDetector:
         lost_track_min_gap: int = 8,
         lost_track_heuristic_thr: float = 0.45,
         lost_track_model_thr: float = 0.35,
+        track_merge_same_frame: bool = False,
         # 兼容字段
         event_logger=None,
     ):
@@ -297,6 +323,7 @@ class MultiTrackFallDetector:
         self.lost_track_min_gap = max(1, int(lost_track_min_gap))
         self.lost_track_heuristic_thr = float(lost_track_heuristic_thr)
         self.lost_track_model_thr = float(lost_track_model_thr)
+        self.track_merge_same_frame = bool(track_merge_same_frame)
         self.event_logger = event_logger
 
         self.tracks: Dict[int, TrackState] = {}
@@ -375,6 +402,86 @@ class MultiTrackFallDetector:
         return best_tid
 
     # --------------------------------------------------------
+    def _try_adopt_same_frame_duplicate(
+        self,
+        st: TrackState,
+        new_tid: int,
+        new_bbox: np.ndarray,
+        frame_idx: int,
+        img_diag: float,
+        seen_now: set,
+    ):
+        """Merge a same-frame split ID for the same falling person."""
+        if self.track_merger is None or not self.track_merge_same_frame:
+            return None
+
+        best_tid = None
+        best_st = None
+        best_score = 0.0
+        best_reason = None
+        new_aspect = bbox_aspect(new_bbox)
+
+        for old_tid in list(seen_now):
+            if old_tid == new_tid or old_tid not in self.tracks:
+                continue
+            old_st = self.tracks[old_tid]
+            if old_st.last_seen_frame != frame_idx:
+                continue
+
+            old_bbox = old_st.bbox
+            iou = bbox_iou(old_bbox, new_bbox)
+            min_ov = bbox_min_overlap(old_bbox, new_bbox)
+            dist = bbox_center_dist_norm(old_bbox, new_bbox, img_diag)
+            old_aspect = bbox_aspect(old_bbox)
+
+            fall_like = (
+                old_st.heuristic_score >= 0.35
+                or old_st.smoothed_prob >= 0.20
+                or old_aspect >= 1.20
+                or new_aspect >= 1.20
+            )
+            spatial_overlap = iou >= max(0.10, self.track_merger.iou_thr * 0.4) or min_ov >= 0.45
+            spatial_near = (
+                dist <= min(0.10, self.track_merger.center_dist_norm_thr)
+                and (old_aspect >= 1.05 or new_aspect >= 1.05)
+            )
+            if not (fall_like and (spatial_overlap or spatial_near)):
+                continue
+
+            score = iou + 0.5 * min_ov + max(0.0, 0.10 - dist)
+            reason_parts = [
+                f"same_frame_iou={iou:.2f}",
+                f"overlap={min_ov:.2f}",
+                f"dist={dist:.3f}",
+            ]
+            if old_st.heuristic_score >= 0.35:
+                reason_parts.append(f"old_heur={old_st.heuristic_score:.2f}")
+            if old_st.smoothed_prob >= 0.20:
+                reason_parts.append(f"old_p={old_st.smoothed_prob:.2f}")
+            reason = ",".join(reason_parts)
+
+            if score > best_score:
+                best_tid = old_tid
+                best_st = old_st
+                best_score = score
+                best_reason = reason
+
+        if best_st is None:
+            return None
+
+        st.adopt_state(best_st)
+        self.track_merger.merge_log.append({
+            "frame": frame_idx,
+            "new_track_id": int(new_tid),
+            "inherited_from": int(best_tid),
+            "display_id": int(best_st.display_id),
+            "reason": best_reason,
+        })
+        del self.tracks[best_tid]
+        seen_now.discard(best_tid)
+        return best_tid
+
+    # --------------------------------------------------------
     def update(self, frame_idx, kpts, scores, bboxes, track_ids, img_shape, frame=None):
         H, W = img_shape
         img_diag = float(np.hypot(H, W))
@@ -384,11 +491,12 @@ class MultiTrackFallDetector:
             if int(tid) >= 0 and np.any(kpts[i])
         }
         seen_now = set()
+        suppressed_ids = set()
 
         # 1. 喂数据 + 尝试 track 合并
         for i, tid in enumerate(track_ids):
             tid = int(tid)
-            if tid < 0:
+            if tid < 0 or tid in suppressed_ids:
                 continue
             kpt = kpts[i]
             scr = scores[i]
@@ -399,15 +507,26 @@ class MultiTrackFallDetector:
             if tid not in self.tracks:
                 st = self._new_track(tid)
                 if self.track_merger is not None:
-                    adopted_tid = self._try_adopt_recent_inactive_track(
+                    adopted_tid = self._try_adopt_same_frame_duplicate(
                         st=st,
                         new_tid=tid,
                         new_bbox=bboxes[i],
                         frame_idx=frame_idx,
                         img_diag=img_diag,
-                        current_ids=current_ids,
+                        seen_now=seen_now,
                     )
                     if adopted_tid is None:
+                        adopted_tid = self._try_adopt_recent_inactive_track(
+                            st=st,
+                            new_tid=tid,
+                            new_bbox=bboxes[i],
+                            frame_idx=frame_idx,
+                            img_diag=img_diag,
+                            current_ids=current_ids,
+                        )
+                    if adopted_tid is not None:
+                        suppressed_ids.add(adopted_tid)
+                    else:
                         tomb = self.track_merger.try_match(
                             new_track_id=tid, new_bbox=bboxes[i],
                             current_frame=frame_idx, img_diag=img_diag,
@@ -982,6 +1101,7 @@ def run_multitarget_realtime(args):
         lost_track_min_gap=args.lost_track_min_gap,
         lost_track_heuristic_thr=args.lost_track_heuristic_thr,
         lost_track_model_thr=args.lost_track_model_thr,
+        track_merge_same_frame=args.track_merge_same_frame,
         event_logger=event_logger,
     )
 
@@ -1130,6 +1250,8 @@ def build_argparser():
                    help="中心点距离归一化阈值(占图像对角线比例)")
     p.add_argument("--track-merge-gap", type=int, default=15,
                    help="允许的最大消失帧数")
+    p.add_argument("--track-merge-same-frame", action="store_true",
+                   help="合并同一帧中疑似同一摔倒者被拆出的重复 track")
 
     # 报警策略
     p.add_argument("--threshold", type=float, default=0.5,

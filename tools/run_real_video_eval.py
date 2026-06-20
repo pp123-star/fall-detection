@@ -135,6 +135,8 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
                 "--track-merge-iou-thr", str(args.track_merge_iou_thr),
                 "--track-merge-dist-thr", str(args.track_merge_dist_thr),
                 "--track-merge-gap", str(args.track_merge_gap)]
+    if args.track_merge_same_frame:
+        cmd += ["--track-merge-same-frame"]
     if args.high_thr < 1.0:
         cmd += ["--high-thr", str(args.high_thr)]
     if args.topk_mean_thr < 1.0:
@@ -343,6 +345,7 @@ def main():
     p.add_argument("--track-merge-iou-thr", type=float, default=0.3)
     p.add_argument("--track-merge-dist-thr", type=float, default=0.15)
     p.add_argument("--track-merge-gap", type=int, default=15)
+    p.add_argument("--track-merge-same-frame", action="store_true")
     p.add_argument("--high-thr", type=float, default=1.01)
     p.add_argument("--topk-mean-thr", type=float, default=1.01)
     p.add_argument("--topk-window", type=int, default=5)

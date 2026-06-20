@@ -1638,3 +1638,30 @@ tools/run_real_video_eval.py
 ```
 
 该修改只影响 overlay 可视化是否继续绘制旧 track，不改变模型输入、P(fall)、报警事件、summary 或训练 checkpoint。
+
+### 10.22 同帧 ID 拆分接力
+
+用户截图确认了另一类失败：同一个老人摔倒过程中，YOLO/ByteTrack 会在同一帧同时给出两个 ID。例如旧 `id:1` 仍覆盖身体一部分，新 `id:5` 覆盖已经躺倒的人体，导致新 ID 没有继承旧 ID 的站立、失衡、下落过程，PoseConv3D 只能看到短片段或躺倒后的片段，`P(fall)` 容易很低。
+
+已有逻辑只能处理“旧 ID 消失后，新 ID 再出现”的接力：
+
+```text
+_try_adopt_recent_inactive_track(...)
+```
+
+但截图属于“旧 ID 和新 ID 同帧共存”的拆分，因此新增显式开关：
+
+```text
+--track-merge-same-frame
+```
+
+新增处理：
+
+* 在同一帧中，如果新 track 刚出现，会检查已经处理过的当前帧 track。
+* 只有同时满足空间证据和摔倒前兆才合并，避免多人场景误合并：
+  * bbox IoU 达到较低但有效的重叠阈值，或小框被大框明显包含，或两框非常近且呈横向/低姿态；
+  * 旧 track 已有 `heuristic_score >= 0.35`、`P(fall) >= 0.20`，或新旧 bbox 呈明显横向躺倒形态。
+* 合并时，新 ID 继承旧 ID 的 display id、TimeAwareBuffer、概率状态、启发式状态和报警状态。
+* 被合并的旧碎片 track 从当前内部 tracks 中移除，避免 overlay 同时画出同一个人的两个框。
+
+这次修改不关闭或削弱现有 `track_timeout=120`、`track_merge`、`lost_track_alert`。它是对“同帧拆分”的补充，目标是让模型拿到更连续的摔倒动作输入，而不是只靠逻辑兜底。
