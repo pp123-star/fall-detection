@@ -580,28 +580,6 @@ class MultiTrackFallDetector:
     def snapshot(self) -> List[TrackState]:
         return list(self.tracks.values())
 
-    def visible_snapshot(self, frame_idx: int, max_age_frames: int = 0) -> List[TrackState]:
-        """Return tracks that should be drawn without dropping active fall boxes."""
-        max_age_frames = max(0, int(max_age_frames))
-        visible = []
-        for st in self.tracks.values():
-            age = frame_idx - st.last_seen_frame
-            if age <= max_age_frames:
-                visible.append(st)
-                continue
-            must_draw_fall = (
-                st.alerted
-                or st.alert_frames_left > 0
-                or st.smoothed_prob >= self.threshold
-                or (
-                    self.pose_heuristic is not None
-                    and st.heuristic_score >= self.pose_heuristic_thr
-                )
-            )
-            if must_draw_fall and age <= self.track_timeout:
-                visible.append(st)
-        return visible
-
     @property
     def active_count(self) -> int:
         return len(self.tracks)
@@ -941,12 +919,9 @@ def run_multitarget_realtime(args):
             loop_ms = (time.time() - t_loop) * 1000
             fps_hist.append(1000.0 / max(loop_ms, 1e-6))
             cur_fps = float(np.mean(fps_hist))
-            visible_tracks = detector.visible_snapshot(
-                frame_idx, max_age_frames=args.draw_track_max_age
-            )
             draw_multitrack_overlay(
-                frame, visible_tracks, args.threshold, args.kpt_thr,
-                cur_fps, detector.last_infer_ms, len(visible_tracks),
+                frame, detector.snapshot(), args.threshold, args.kpt_thr,
+                cur_fps, detector.last_infer_ms, detector.active_count,
                 len(detector.alerted_ids), noid_dets=noid_dets,
             )
 
@@ -1049,8 +1024,6 @@ def build_argparser():
     p.add_argument("--infer-every", type=int, default=6)
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--track-timeout", type=int, default=30)
-    p.add_argument("--draw-track-max-age", type=int, default=3,
-                   help="只绘制最近 N 帧内被重新观测到的 track；默认 3 帧，减少短时漏检闪断并避免拼接视频长时间残留骨架")
 
     # Track 合并(ID switch 处理)
     p.add_argument("--track-merge", action="store_true",
