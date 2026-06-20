@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -141,9 +142,17 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         cmd += ["--ground-truth", str(int(label))]
 
     print(f"\n>>> [{video_path.name}] (gt={label})")
+    env = os.environ.copy()
+    local_mmaction = REPO_ROOT / "mmaction2_src"
+    if local_mmaction.exists():
+        old_pythonpath = env.get("PYTHONPATH", "")
+        parts = [str(local_mmaction)]
+        if old_pythonpath:
+            parts.append(old_pythonpath)
+        env["PYTHONPATH"] = os.pathsep.join(parts)
     try:
         cp = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True,
-                            text=True, timeout=args.timeout_sec)
+                            text=True, timeout=args.timeout_sec, env=env)
         ok = (cp.returncode == 0)
         if not ok:
             print(f"  [FAIL] returncode={cp.returncode}")

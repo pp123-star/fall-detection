@@ -827,3 +827,18 @@ python tools/run_real_video_eval.py \
 ```
 
 跑完后用 `tools/plot_prob_curves.py` 查看 `test4/test7` 的概率曲线，再决定是否需要把困难正样本加入微调/重训。
+
+### 10.7 服务器首次运行暴露的 MMAction2 导入修复
+
+服务器同步到 `079b5dc` 后首次运行 `tools/run_real_video_eval.py`，4 个视频均在加载动作模型阶段失败：
+
+```text
+ModuleNotFoundError: No module named 'mmaction.models.localizers.drn'
+```
+
+原因是评估脚本启动子进程时没有优先使用仓库内的 `mmaction2_src`，导致 Python 导入了环境里不完整的 pip 版 `mmaction`。修复方式：
+
+* `inference/batch_predict.py` 的 `load_action_model()` 在导入 `mmaction.apis` 前，将仓库内 `mmaction2_src` 插入 `sys.path`。
+* `tools/run_real_video_eval.py` 在 `subprocess.run(...)` 时显式给子进程传入包含 `mmaction2_src` 的 `PYTHONPATH`。
+
+该修复只影响代码导入路径，不删除、不移动、不覆盖服务器上的 `work_dirs/`、checkpoint、`data/` 或已有 `outputs/`。

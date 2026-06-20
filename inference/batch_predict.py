@@ -62,6 +62,12 @@ from inference.pose_to_pyskl_format import build_sample, split_into_clips
 # ============================================================
 def load_action_model(config_path, ckpt_path, device="cuda:0"):
     """加载训练好的动作识别模型。"""
+    repo_root = Path(__file__).resolve().parent.parent
+    local_mmaction = repo_root / "mmaction2_src"
+    if local_mmaction.exists():
+        local_mmaction_str = str(local_mmaction)
+        if local_mmaction_str not in sys.path:
+            sys.path.insert(0, local_mmaction_str)
     from mmaction.apis import init_recognizer
     model = init_recognizer(str(config_path), str(ckpt_path), device=device)
     model.eval()
