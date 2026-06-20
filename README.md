@@ -32,6 +32,7 @@ fall-detection/
 │   ├── 04_evaluation_visualization.md
 │   ├── 05_inference_deployment.md
 │   ├── 06_multitarget_realtime_detection.md
+│   ├── 08_real_video_inference_diagnostics.md
 │   └── 99_troubleshooting_checklist.md ← 强烈建议看
 ├── env/
 │   ├── setup_autodl.sh             ← AutoDL 一键环境搭建
@@ -52,10 +53,13 @@ fall-detection/
 │   ├── test.sh
 │   ├── eval_binary_metrics.py      ← 二分类精确指标(F1/P/R/混淆矩阵)
 │   ├── plot_curves.py              ← 训练曲线绘制
+│   ├── plot_prob_curves.py         ← 真实视频 P(fall) 曲线诊断
+│   ├── run_real_video_eval.py      ← 真实视频批量评估/overlay/summary
 │   └── verify_best_ckpt.py         ← checkpoint 保存逻辑验证
 ├── inference/
 │   ├── extract_pose_yolo26.py      ← YOLO26-Pose 提取骨骼
 │   ├── pose_to_pyskl_format.py     ← 关键点 → MMAction2 格式
+│   ├── realtime_core.py            ← 真实视频推理核心组件
 │   ├── realtime_demo.py            ← 实时摄像头/视频演示
 │   ├── multitarget_realtime_demo.py ← 多目标实时摔倒检测
 │   └── batch_predict.py            ← 批量视频推理
@@ -99,7 +103,8 @@ python inference/batch_predict.py --video your_test.mp4 \
 3. `docs/03_model_training.md` — 含 PoseConv3D vs ST-GCN++ 两条命令
 4. `docs/04_evaluation_visualization.md` — 论文里那些图表怎么出
 5. `docs/05_inference_deployment.md` — YOLO26-Pose + 训练好的分类器串联
-6. `docs/99_troubleshooting_checklist.md` — 把上次项目踩的坑都列了,新坑也列了
+6. `docs/08_real_video_inference_diagnostics.md` — 真实视频漏检诊断、概率日志、时间窗口和 ID 切换策略
+7. `docs/99_troubleshooting_checklist.md` — 把上次项目踩的坑都列了,新坑也列了
 
 ## 六、给毕业论文的章节建议(对应实验内容)
 

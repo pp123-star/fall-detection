@@ -150,7 +150,7 @@ tail -f "$(find work_dirs/posec3d_fall_binary -name '*.log' -type f -printf '%T@
 
 ## 6. 2026-06-20 有卡模式环境修复与训练启动记录
 
-**执行人:** Codex  
+**执行人:** Codex
 **服务器:** `root@connect.westc.seetacloud.com:50071`  
 **远端目录:** `/root/autodl-tmp/fall-detection`
 
@@ -290,7 +290,7 @@ tail -f /root/autodl-tmp/fall-detection/work_dirs/posec3d_fall_binary/20260620_0
 
 ## 7. 2026-06-20 多目标实时检测文件接入记录
 
-**执行人:** Codex  
+**执行人:** Codex
 **本地目录:** `D:\AAA\基于深度学习的视频动作识别技术研究\fall-detection`
 
 ### 7.1 新增文件放置
@@ -701,3 +701,129 @@ outputs/real_test_overlay_test4567_20260620_044418/logs/
 * `test4/test7` 是有价值的困难正样本，适合作为后续真实场景改进用例。
 * 需要优先改推理侧的真实时间窗口和概率日志：当前 summary 只记录报警事件，未报警视频没有每次推理的 `P(fall)` 峰值，因此 `test4/test7` 的 `max_pfall=NA` 不能解释为模型概率一定为 0。
 * 下一步应增加每次分类的 `P(fall)` 日志，按视频输出 max/mean/top-k 概率，再比较 60fps 原视频和重采样 30fps 后的结果。
+
+## 10. 2026-06-20 真实视频推理策略升级合并记录
+
+**执行人:** Codex
+**本地目录:** `D:\AAA\基于深度学习的视频动作识别技术研究\fall-detection`
+
+### 10.1 合并来源
+
+用户提供了 Claude 生成的升级代码与说明，放在本地未跟踪目录 `add/` 中：
+
+```text
+add/08_真实视频推理与诊断.md
+add/batch_predict.py
+add/multitarget_realtime_demo.py
+add/plot_prob_curves.py
+add/realtime_core.py
+add/run_real_video_eval.py
+```
+
+本次将有价值改动合并到正式项目路径，`add/` 目录本身仍保持未跟踪状态，不作为项目源码提交。
+
+### 10.2 本次新增/修改文件
+
+新增：
+
+```text
+docs/08_real_video_inference_diagnostics.md
+inference/realtime_core.py
+tools/run_real_video_eval.py
+tools/plot_prob_curves.py
+```
+
+修改：
+
+```text
+README.md
+inference/batch_predict.py
+inference/multitarget_realtime_demo.py
+Worklog.md
+```
+
+### 10.3 功能变化
+
+推理侧新增真实视频诊断与策略能力：
+
+* `TimeAwareBuffer`：支持按真实时间窗口缓存原始帧，再均匀采样到 `clip_len=48`，用于处理 60fps 手机视频中 48 帧只覆盖约 0.8 秒的问题。
+* `TrackMerger`：支持在 ByteTrack ID 短时切换时，将刚消失 track 的 buffer 和概率状态继承给空间接近的新 track。
+* `AlertPolicy`：新增单次高分 `high_single`、连续中分 `consec_mid`、最近窗口 `topk_mean` 三种报警策略并联。
+* `ProbabilityLogger`：支持 `--prob-log`，每次动作分类都记录 raw/smoothed `P(fall)`，未报警视频也能看到概率峰值。
+* `VideoSummaryBuilder`：支持 `--summary-json`，输出 max/mean/top-k 概率、报警事件、ID 合并次数和自动诊断标签。
+* `tools/run_real_video_eval.py`：一键批量跑真实视频，收集 overlay、events、probs、summaries、summary.csv、failure_cases.csv 和 metrics.json。
+* `tools/plot_prob_curves.py`：将概率日志画成曲线，便于诊断 test4/test7 这类漏检到底是阈值问题、ID 切换问题，还是模型全程低分。
+
+### 10.4 合并时保留/修正的关键点
+
+Claude 版本基于较早代码生成，本次合并时保留了上一次已经验证过的 MMAction2 修复：
+
+```python
+from mmengine.dataset import Compose, pseudo_collate
+data = pseudo_collate([pipeline(clip_sample.copy())])
+result = model.test_step(data)[0]
+```
+
+同时修正了 Claude 版本中的几个语义问题：
+
+* `multitarget_realtime_demo.py` 的 `--time-window-sec` 默认改回 `0.0`，确保不传新参数时仍保持旧版 48 帧滚动缓冲行为。
+* 新增 `--target-fps` 只用于在未显式给 `--time-window-sec` 时推导 `clip_len / target_fps` 的训练等效窗口，不再覆盖真实源视频 fps。
+* `tools/run_real_video_eval.py` 不再把 `--target-fps 30` 错传为 `--source-fps 30`，避免 60fps 视频的 1.6 秒窗口被错误压回 48 原始帧。
+* `batch_predict.py` 的 time-window 切窗按真实 `source_fps * time_window_sec` 计算窗口原始帧数，`target_fps` 不再用于缩短真实时间窗口。
+* overlay 标签保留当前项目已修正样式：`id:<track_id> NORMAL/FALL P(fall):<prob>`。
+* 实时脚本主循环发生异常时，写完 summary 后返回非零，方便批量评估识别失败视频。
+
+### 10.5 本地验证
+
+由于本机 PATH 中没有 `python`，使用 Codex 桌面内置 Python 做内存语法编译检查，避免写入 `__pycache__`：
+
+```powershell
+C:\Users\zz162\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -c "..."
+```
+
+验证文件：
+
+```text
+inference/batch_predict.py
+inference/multitarget_realtime_demo.py
+inference/realtime_core.py
+tools/run_real_video_eval.py
+tools/plot_prob_curves.py
+```
+
+结果：
+
+```text
+syntax ok: 5
+```
+
+### 10.6 后续建议
+
+服务器同步后优先跑真实视频小实验：
+
+```bash
+python tools/run_real_video_eval.py \
+    --video-dir data/real_test \
+    --labels-csv data/real_test/labels.csv \
+    --config configs/posec3d_fall_binary.py \
+    --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+    --out-dir outputs/real_eval/A_baseline
+```
+
+然后跑推荐组合：
+
+```bash
+python tools/run_real_video_eval.py \
+    --video-dir data/real_test \
+    --labels-csv data/real_test/labels.csv \
+    --config configs/posec3d_fall_binary.py \
+    --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+    --out-dir outputs/real_eval/C_recommended \
+    --time-window-sec 1.6 \
+    --track-merge \
+    --threshold 0.45 \
+    --high-thr 0.7 \
+    --topk-mean-thr 0.5
+```
+
+跑完后用 `tools/plot_prob_curves.py` 查看 `test4/test7` 的概率曲线，再决定是否需要把困难正样本加入微调/重训。
