@@ -115,6 +115,7 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         "--kpt-thr", str(args.kpt_thr),
         "--conf", str(args.conf),
         "--imgsz", str(args.imgsz),
+        "--draw-track-max-age", str(args.draw_track_max_age),
         "--save-out", str(overlay),
         "--event-log", str(event_log),
         "--prob-log", str(prob_log),
@@ -332,6 +333,8 @@ def main():
     p.add_argument("--track-merge-iou-thr", type=float, default=0.3)
     p.add_argument("--track-merge-dist-thr", type=float, default=0.15)
     p.add_argument("--track-merge-gap", type=int, default=15)
+    p.add_argument("--draw-track-max-age", type=int, default=0,
+                   help="只绘制最近 N 帧内被重新观测到的 track；0 表示只画当前帧")
     p.add_argument("--high-thr", type=float, default=1.01)
     p.add_argument("--topk-mean-thr", type=float, default=1.01)
     p.add_argument("--topk-window", type=int, default=5)
