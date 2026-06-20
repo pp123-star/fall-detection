@@ -1452,3 +1452,77 @@ outputs/real_eval/_archive_misc_20260620_233500
 ```
 
 未删除任何 `work_dirs/`、checkpoint、data 或有效 overlay 结果。
+
+### 10.18 还原下午 17:20-18:00 版本的 overlay 绘制方式
+
+用户反馈：当前输出效果不如下午 17:20-18:00 左右版本，红框出现/持续显示效果变差。对比提交后定位到影响操作：
+
+```text
+368cf45 Track training artifacts and hide stale overlay tracks
+```
+
+该提交之后，overlay 绘制从：
+
+```python
+draw_multitrack_overlay(frame, detector.snapshot(), ...)
+```
+
+改成了：
+
+```python
+visible_tracks = detector.visible_snapshot(...)
+draw_multitrack_overlay(frame, visible_tracks, ...)
+```
+
+这不会改变模型输入、`P(fall)`、报警事件或 summary，但会改变视频上哪些 track 被画出来。由于 `visible_snapshot()` 会过滤短时不可见/未重新观测到的 track，红框/紫框的视觉持续性不如下午版本。
+
+已还原：
+
+```text
+inference/multitarget_realtime_demo.py
+tools/run_real_video_eval.py
+```
+
+恢复为下午版本的绘制路径：
+
+```text
+draw_multitrack_overlay(frame, detector.snapshot(), ...)
+```
+
+并移除批量脚本对 `--draw-track-max-age` 的透传。后续 overlay 会重新画出 detector 内部保留的全部 track，红框显示效果应回到下午版本。代价是拼接视频中普通旧骨架残留也会回到下午版本的行为。
+
+重跑 `elder_fall` 后的最新输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_legacydraw_20260620_235056
+```
+
+输出包含 11 个 overlay：
+
+```text
+elder_fall_1_overlay.mp4
+elder_fall_2_overlay.mp4
+elder_fall_3_overlay.mp4
+elder_fall_4_overlay.mp4
+elder_fall_5_overlay.mp4
+elder_fall_6_overlay.mp4
+elder_fall_7_overlay.mp4
+elder_fall_8_overlay.mp4
+elder_fall_9_overlay.mp4
+test8_overlay.mp4
+test9_overlay.mp4
+```
+
+summary 与前次一致：
+
+```text
+detected: 9/11
+elder_fall_4.mp4: just_below_threshold, max_pfall=0.4616
+elder_fall_7.mp4: model_unaware, max_pfall=0.2654
+```
+
+服务器 manifest 已更新，最新版指向：
+
+```text
+outputs/real_eval/elder_fall_color_overlay_legacydraw_20260620_235056
+```

@@ -670,3 +670,29 @@ Server output manifest:
 ```text
 /root/autodl-tmp/fall-detection/outputs/real_eval/MANIFEST_20260620.txt
 ```
+
+### Follow-up Overlay Restore - Legacy Track Drawing
+
+The active-fall-box display fix still did not match the user's preferred 17:20-18:00 overlay behavior. The operation that affected red-box appearance was the change from drawing all detector tracks to drawing a filtered `visible_snapshot()`.
+
+Restored behavior:
+
+```text
+draw_multitrack_overlay(frame, detector.snapshot(), ...)
+```
+
+The batch script no longer passes `--draw-track-max-age`. This restores the afternoon overlay behavior: all internally retained tracks are drawn, which preserves red/purple box continuity. The tradeoff is that stitched-video stale skeletons can again persist until the normal track timeout.
+
+Latest rerun:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_legacydraw_20260620_235056
+```
+
+Result summary remains unchanged because this is a visualization-only restore:
+
+```text
+detected: 9/11
+elder_fall_4.mp4: just_below_threshold, max_pfall=0.4616
+elder_fall_7.mp4: model_unaware, max_pfall=0.2654
+```
