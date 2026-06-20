@@ -506,3 +506,30 @@ Interpretation:
 * This 8/8 result is a deployment result with logic fallback enabled.
 * It must not be reported as pure PoseConv3D model performance.
 * A separate model-only rerun should be kept for scientific reporting and ablation.
+
+Additional single-video rerun:
+
+```text
+Input:
+/root/autodl-tmp/fall-detection/data/real_test/50种摔倒方式_fall.MP4
+
+Output:
+/root/autodl-tmp/fall-detection/outputs/real_eval/fifty_fall_color_overlay_20260620_174107
+```
+
+Summary:
+
+```text
+total_frames=5586
+total_inferences=1690
+num_unique_tracks=42
+num_id_switches_handled=12
+num_alerts=43
+alerted_track_count=38
+diagnosis=detected
+max_pfall=1.0
+mean_pfall=0.35
+max_pose_heuristic=1.0
+```
+
+This rerun also used `model + pose_heuristic logic fallback`; it should be compared against a future model-only ablation if used in the paper.

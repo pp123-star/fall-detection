@@ -1210,3 +1210,50 @@ f1: 1.0
 * 上述 8/8 是部署版本 `模型 + 逻辑兜底` 的结果，不能作为纯 PoseConv3D 模型效果。
 * 例如 `test4/test7` 这类视频，模型原始 `P(fall)` 仍低，主要靠紫色 `LOGIC FALL` 兜底。
 * 后续论文/汇报中应同时保留 `model-only` 和 `model+logic` 两套指标，避免把工程规则误写成模型泛化能力。
+
+### 10.13 `50种摔倒方式_fall.MP4` 单视频重跑
+
+按用户要求，单独重跑服务器上的长视频：
+
+```text
+/root/autodl-tmp/fall-detection/data/real_test/50种摔倒方式_fall.MP4
+```
+
+输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/fifty_fall_color_overlay_20260620_174107
+```
+
+输出文件：
+
+```text
+overlays/50_fall_overlay.mp4
+events/50_fall_events.jsonl
+probs/50_fall_prob.jsonl
+summaries/50_fall_summary.json
+snapshots/50_fall/
+```
+
+运行结果摘要：
+
+```text
+total_frames: 5586
+total_inferences: 1690
+num_unique_tracks: 42
+num_id_switches_handled: 12
+num_alerts: 43
+alerted track count: 38
+diagnosis: detected
+max_pfall: 1.0
+mean_pfall: 0.35
+max_pose_heuristic: 1.0
+mean_top5_pfall: 1.0
+mean_top5_pose_heuristic: 1.0
+```
+
+解释：
+
+* 这是 `model + pose_heuristic logic fallback` 部署版本结果。
+* 该视频包含多段摔倒和多 track；既有红色 `MODEL FALL`，也有紫色 `LOGIC FALL`。
+* 后续如需论文中的纯模型对照，应另跑一份不加 `--pose-heuristic-alert` 的 `model-only` 输出。
