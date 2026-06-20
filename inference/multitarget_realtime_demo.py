@@ -92,6 +92,7 @@ COCO_SKELETON = [
 ]
 COLOR_NORMAL = (60, 200, 60)
 COLOR_FALL = (60, 60, 240)
+COLOR_LOGIC_FALL = (220, 60, 220)
 COLOR_NOID = (160, 160, 160)
 
 
@@ -630,7 +631,8 @@ class EventLogger:
         if self._fh:
             self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self._fh.flush()
-        print(f"[ALERT] frame={frame_idx} track={track_id} P(fall)={rec['fall_prob']} ({event})")
+        suffix = f" reason={reason}" if reason else ""
+        print(f"[ALERT] frame={frame_idx} track={track_id} P(fall)={rec['fall_prob']} ({event}){suffix}")
 
     def close(self):
         if self._fh:
@@ -646,22 +648,42 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
     H, W = frame.shape[:2]
 
     for st in tracks:
-        is_fall = st.alerted or st.smoothed_prob >= threshold
-        color = COLOR_FALL if is_fall else COLOR_NORMAL
+        logic_alert = _is_logic_alert(st)
+        model_alert = st.alerted and not logic_alert
+        model_score_fall = st.smoothed_prob >= threshold
+        is_fall = st.alerted or model_score_fall
+        if logic_alert:
+            color = COLOR_LOGIC_FALL
+        elif model_alert or model_score_fall:
+            color = COLOR_FALL
+        else:
+            color = COLOR_NORMAL
         _draw_skeleton(frame, st.last_kpts, st.last_scores, color, kpt_thr)
         if st.bbox is not None and np.any(st.bbox):
             x1, y1, x2, y2 = st.bbox.astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            status = "FALL" if is_fall else "NORMAL"
-            label = f"id:{st.display_id} {status} P(fall):{st.smoothed_prob:.2f}"
-            if getattr(st, "heuristic_score", 0.0) >= 0.3:
+            if logic_alert:
+                status = "LOGIC FALL"
+            elif is_fall:
+                status = "MODEL FALL"
+            else:
+                status = "NORMAL"
+            label = f"id:{st.display_id} {status} P:{st.smoothed_prob:.2f}"
+            if getattr(st, "heuristic_score", 0.0) >= 0.3 or logic_alert:
                 label += f" H:{st.heuristic_score:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
-                tag = "FALL"
-                if st.last_alert_reason:
-                    tag = f"FALL({st.last_alert_reason})"
-                _draw_label(frame, tag, (x1, y2 + 18), COLOR_FALL, scale=0.55)
+                if logic_alert:
+                    tag = f"LOGIC FALL H:{st.heuristic_score:.2f}"
+                    reason = _short_logic_reason(st.last_alert_reason)
+                    _draw_label(frame, tag, (x1, y2 + 24), COLOR_LOGIC_FALL, scale=0.78)
+                    if reason:
+                        _draw_label(frame, reason, (x1, y2 + 48), COLOR_LOGIC_FALL, scale=0.52)
+                else:
+                    tag = f"MODEL FALL P:{st.smoothed_prob:.2f}"
+                    if st.last_alert_reason:
+                        tag = f"{tag} {st.last_alert_reason}"
+                    _draw_label(frame, tag, (x1, y2 + 22), COLOR_FALL, scale=0.68)
 
     if noid_dets:
         for bbox in noid_dets:
@@ -678,7 +700,24 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
     cv2.putText(frame, hud, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255), 1, cv2.LINE_AA)
     if any(st.alerted for st in tracks):
-        cv2.circle(frame, (W - 20, 18), 8, COLOR_FALL, -1)
+        light = COLOR_LOGIC_FALL if any(_is_logic_alert(st) for st in tracks) else COLOR_FALL
+        cv2.circle(frame, (W - 20, 18), 8, light, -1)
+
+
+def _is_logic_alert(st: TrackState) -> bool:
+    return bool(st.alerted and str(st.last_alert_reason or "").startswith("pose_heuristic"))
+
+
+def _short_logic_reason(reason: str) -> str:
+    if not reason:
+        return ""
+    reason = str(reason).replace("pose_heuristic:", "")
+    keys = []
+    for part in reason.split(","):
+        name = part.split("=", 1)[0].strip()
+        if name:
+            keys.append(name)
+    return "/".join(keys[:4])
 
 
 def _draw_skeleton(img, kpts, scores, color, kpt_thr):
