@@ -355,3 +355,88 @@ Interpretation:
 * The upgraded inference strategy detects 3 of these 4 additional fall-positive videos.
 * `test1.mp4` is a partial-signal miss rather than a full model-unaware miss: max `P(fall)=0.4460`, just below the current `threshold=0.45`.
 * Across the 8 real fall-positive videos processed so far with the upgraded strategy, detections are 5/8. The strongest fine-tuning candidates remain `test4.mp4` and `test7.mp4` because their probabilities stay very low; `test1.mp4` may be recoverable by threshold/alert-policy tuning or fine-tuning.
+
+## 2026-06-20 - Real-Video Inference V3 Pose-Heuristic Diagnostic
+
+This is an inference-only diagnostic update. No model was trained, no checkpoint was deleted, and the recommended baseline checkpoint remains:
+
+```text
+work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+```
+
+Context:
+
+* The user clarified that `2026-06-20 035837.mp4` is a stitched one-minute video made from multiple clips. Track/person changes across clip boundaries are expected and should not be treated as the main ByteTrack failure mode.
+* Manual screenshots of the banana-peel fall segment show stable `id:7` and usable pose quality, but low model probabilities. The bottleneck is classifier/domain generalization for this fast backward fall, not pose extraction.
+
+Code commit:
+
+```text
+8290858 Add pose heuristic fall fallback
+```
+
+V3 change:
+
+* Added optional `PoseHeuristicScorer`, disabled by default.
+* The scorer logs and summarizes an independent pose-geometry fallback score based on torso tilt/change, pose aspect/change, hip drop, and raised-leg signals.
+* `--pose-heuristic-alert` can trigger alerts when the model remains low but pose geometry strongly indicates a fast fall.
+* This fallback must be treated as a deployment-side safety net, not as a replacement for model metrics. It needs non-fall negative evaluation before becoming a default.
+
+Server run:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711
+```
+
+Command family:
+
+```bash
+python inference/multitarget_realtime_demo.py \
+  --source "data/real_test/2026-06-20 035837.mp4" \
+  --config configs/posec3d_fall_binary.py \
+  --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+  --time-window-sec 1.6 \
+  --track-merge \
+  --threshold 0.45 \
+  --high-thr 0.7 \
+  --topk-mean-thr 0.5 \
+  --infer-every 2 \
+  --max-persons 5 \
+  --pose-heuristic-alert \
+  --pose-heuristic-thr 0.62 \
+  --ground-truth 1 \
+  --no-show
+```
+
+Result summary:
+
+```text
+total_frames=1812
+total_inferences=580
+num_unique_tracks=13
+num_id_switches_handled=3
+num_alerts=12
+diagnosis=detected
+max_pfall=0.9995
+mean_pfall=0.2546
+max_pose_heuristic=1.0
+mean_top5_pose_heuristic=1.0
+```
+
+Key banana-peel segment observation:
+
+```text
+track_id=7
+frame=451
+raw_prob=0.025365
+smoothed_prob=0.030157
+heuristic_score=0.680831
+alert_reason=pose_heuristic:wide_delta=0.64,leg_raised=0.50
+```
+
+Follow-up:
+
+* Keep the V3 fallback optional until it is tested on realistic non-fall negatives.
+* Do not over-merge IDs across stitched-video boundaries.
+* For future model improvement, use difficult real positives such as `test4.mp4`, `test7.mp4`, `test1.mp4`, and the banana-peel fast fall segment, plus hard negatives, for fine-tuning.
+* Any future training/fine-tuning run must be launched in `screen`, for example `screen -S falldet-finetune`, so the web terminal can attach with `screen -x falldet-finetune`.

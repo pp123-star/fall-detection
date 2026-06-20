@@ -568,6 +568,7 @@ class MultiTrackFallDetector:
                         frame_idx=frame_idx, track_id=st.display_id,
                         fall_prob=trig_prob, bbox=st.bbox,
                         source=self.source_name, event="onset",
+                        reason=reason,
                         frame=frame,
                     )
 
@@ -600,7 +601,8 @@ class EventLogger:
         if self.snapshot_dir:
             self.snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    def log(self, frame_idx, track_id, fall_prob, bbox, source, event="onset", frame=None):
+    def log(self, frame_idx, track_id, fall_prob, bbox, source, event="onset",
+            reason="", frame=None):
         if event == "ongoing" and self.repeat_frames > 0:
             last = self._last_log_frame.get(track_id, -10 ** 9)
             if frame_idx - last < self.repeat_frames:
@@ -615,6 +617,7 @@ class EventLogger:
             "bbox": [int(x) for x in np.asarray(bbox).tolist()],
             "source": str(source),
             "event": event,
+            "reason": str(reason or ""),
         }
         if self.snapshot_dir is not None and frame is not None and event == "onset":
             fn = self.snapshot_dir / f"fall_t{track_id}_f{frame_idx}.jpg"

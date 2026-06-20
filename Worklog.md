@@ -1045,3 +1045,99 @@ f1=0.8571
 * 除 `test1` 外，其余 3 个额外正样本均被检出。
 * `test1` 与 `test4/test7` 不同，不是完全 `model_unaware`，而是 `partial_signal`：最高 `P(fall)=0.4460`，接近当前 `threshold=0.45`，后续可通过更低阈值、top-k 策略或微调进一步处理。
 * 当前真实正样本合并看：`test4-test7` 推荐策略检出 2/4，本轮额外视频检出 3/4；合计 5/8。
+
+### 10.10 `2026-06-20 035837.mp4` 拼接视频诊断与第三版推理
+
+用户补充说明：`2026-06-20 035837.mp4` 是多个视频片段拼接成的一分钟视频，因此跨片段出现不同人、不同视角、不同 track id 是合理现象；不能把所有跨片段 ID 跳变都归因于 ByteTrack 失败，也不应继续盲目增强跨片段 ID 合并。
+
+第二版稳定 display id 复测输出：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_stableid_20260620_162704
+```
+
+结果摘要：
+
+```text
+diagnosis: detected
+num_alerts: 9
+max_pfall: 0.9995
+mean_pfall: 0.2546
+num_unique_tracks: 13
+num_id_switches_handled: 3
+```
+
+用户手动截图显示：香蕉皮式快摔片段中 `id:7` 基本稳定，骨架识别清楚，但模型 `P(fall)` 仍低（截图中约 0.00、0.03、0.08、0.01）。因此该片段的主要瓶颈不是骨架失败，也不是 ID 切换，而是 PoseConv3D 对这种快摔/翻倒姿态的泛化不足。
+
+第三版代码升级：
+
+* 新增 `PoseHeuristicScorer`，默认关闭，仅在显式传入 `--pose-heuristic-alert` 时启用。
+* 启发式分数独立于模型 `P(fall)`，主要使用 COCO17 骨架几何信号：躯干倾斜、躯干倾斜变化、骨架宽高比/宽高比变化、髋部下落、腿部抬高。
+* `ProbabilityLogger` 新增 `heuristic_score` 和 `heuristic_reason` 字段。
+* `VideoSummaryBuilder` 新增 `max_pose_heuristic`、`topK_pose_heuristic`、`per_track_max_pose_heuristic`。
+* `tools/run_real_video_eval.py` 支持透传 `--pose-heuristic-alert`、`--pose-heuristic-thr`、`--pose-heuristic-min-frames`。
+* 事件日志后续也记录触发 `reason`，便于区分 `high_single` 模型报警和 `pose_heuristic` 规则兜底。
+
+第三版服务器单视频复测输出：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711
+```
+
+运行参数：
+
+```bash
+python inference/multitarget_realtime_demo.py \
+  --source "data/real_test/2026-06-20 035837.mp4" \
+  --config configs/posec3d_fall_binary.py \
+  --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+  --time-window-sec 1.6 \
+  --track-merge \
+  --threshold 0.45 \
+  --high-thr 0.7 \
+  --topk-mean-thr 0.5 \
+  --infer-every 2 \
+  --max-persons 5 \
+  --pose-heuristic-alert \
+  --pose-heuristic-thr 0.62 \
+  --ground-truth 1 \
+  --no-show
+```
+
+结果摘要：
+
+```text
+total_frames: 1812
+total_inferences: 580
+num_unique_tracks: 13
+num_id_switches_handled: 3
+num_alerts: 12
+diagnosis: detected
+max_pfall: 0.9995
+mean_pfall: 0.2546
+max_pose_heuristic: 1.0
+mean_top5_pose_heuristic: 1.0
+```
+
+关键发现：
+
+* 香蕉皮片段对应的 `track_id=7` 在 `frame=451` 被第三版启发式兜底触发，触发分数 `0.6808`，原因 `pose_heuristic:wide_delta=0.64,leg_raised=0.50`。
+* 同一片段模型原始概率仍很低：`frame=451 raw_prob=0.025365, smoothed_prob=0.030157`，后续多帧 raw 仍低于 0.15。
+* 第三版没有“修好模型认知”，而是在模型不认识该动作时，通过明确的姿态几何信号补上快速报警。
+* 因为启发式可能增加误报风险，默认仍关闭；后续需要用非摔倒负样本（坐下、弯腰、跳跃、抬腿、运动、翻身等）专门评估 FP。
+
+重要输出文件：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/overlays/2026-06-20_035837_overlay.mp4
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/probs/2026-06-20_035837_prob.jsonl
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/summaries/2026-06-20_035837_summary.json
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/snapshots/2026-06-20_035837/fall_t7_f451.jpg
+```
+
+后续建议：
+
+* 不再把该拼接视频的跨片段 ID 变化视作主要问题。
+* 第三版启发式适合先作为可选部署兜底策略，不应替代模型训练指标。
+* 若要把第三版变成默认策略，必须补充真实非摔倒负样本并统计 FP；否则保持 `--pose-heuristic-alert` 手动开启。
+* 长期模型方案仍是把 `test4/test7/test1` 以及香蕉皮快摔片段作为真实困难正样本，配合困难负样本微调。
