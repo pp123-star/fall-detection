@@ -1154,3 +1154,59 @@ mean_top5_pose_heuristic: 1.0
 * 紫色逻辑报警时，额外放大显示 `LOGIC FALL H:<score>`，并在下一行显示触发参数名，例如 `wide_delta/leg_raised`，避免把规则兜底误读成纯模型输出。
 
 该改动只影响可视化和控制台提示，不改变模型 checkpoint，不改变默认是否启用启发式兜底。
+
+### 10.12 outputs 整理与彩色 overlay 全量重跑
+
+服务器已将旧 `outputs` 内容整体归档，未删除任何训练产物、checkpoint、数据集或旧输出：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/_archive_before_color_overlay_20260620_171257
+```
+
+随后用颜色语义区分后的 overlay 版本重跑 `data/real_test` 下 8 个测试视频（`test1.mp4` 到 `test8.mp4`）。本轮是 `model + pose_heuristic logic fallback` 部署效果，不是纯模型效果。
+
+输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/all_tests_color_overlay_20260620_171342
+```
+
+运行参数：
+
+```bash
+python tools/run_real_video_eval.py \
+  --video-dir data/real_test \
+  --labels-csv data/real_test/labels_all_fall.csv \
+  --config configs/posec3d_fall_binary.py \
+  --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+  --out-dir outputs/real_eval/all_tests_color_overlay_20260620_171342 \
+  --time-window-sec 1.6 \
+  --track-merge \
+  --threshold 0.45 \
+  --high-thr 0.7 \
+  --topk-mean-thr 0.5 \
+  --infer-every 2 \
+  --max-persons 5 \
+  --pose-heuristic-alert \
+  --pose-heuristic-thr 0.62
+```
+
+结果摘要（全部视频均按用户确认的摔倒正样本计算）：
+
+```text
+num_with_gt: 8
+TP: 8
+FP: 0
+TN: 0
+FN: 0
+accuracy: 1.0
+precision: 1.0
+recall: 1.0
+f1: 1.0
+```
+
+重要解释：
+
+* 上述 8/8 是部署版本 `模型 + 逻辑兜底` 的结果，不能作为纯 PoseConv3D 模型效果。
+* 例如 `test4/test7` 这类视频，模型原始 `P(fall)` 仍低，主要靠紫色 `LOGIC FALL` 兜底。
+* 后续论文/汇报中应同时保留 `model-only` 和 `model+logic` 两套指标，避免把工程规则误写成模型泛化能力。

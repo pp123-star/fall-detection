@@ -441,3 +441,68 @@ Follow-up:
 * Do not over-merge IDs across stitched-video boundaries.
 * For future model improvement, use difficult real positives such as `test4.mp4`, `test7.mp4`, `test1.mp4`, and the banana-peel fast fall segment, plus hard negatives, for fine-tuning.
 * Any future training/fine-tuning run must be launched in `screen`, for example `screen -S falldet-finetune`, so the web terminal can attach with `screen -x falldet-finetune`.
+
+## 2026-06-20 - Color Overlay Full Real-Test Rerun
+
+This is an inference-only deployment visualization run. No model was trained and no checkpoint was changed.
+
+Old outputs were archived without deletion:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/_archive_before_color_overlay_20260620_171257
+```
+
+New output directory:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/all_tests_color_overlay_20260620_171342
+```
+
+Code commit used on server:
+
+```text
+733efcd Distinguish model and logic fall overlays
+```
+
+Overlay semantics:
+
+```text
+green  = NORMAL
+red    = MODEL FALL
+purple = LOGIC FALL from pose_heuristic fallback
+```
+
+Videos:
+
+```text
+test1.mp4
+test2.mp4
+test3.mp4
+test4.mp4
+test5.mp4
+test6.mp4
+test7.mp4
+test8.mp4
+```
+
+All were evaluated as fall-positive samples using `model + pose_heuristic logic fallback`, not model-only.
+
+Metric summary:
+
+```text
+num_with_gt=8
+TP=8
+FP=0
+TN=0
+FN=0
+accuracy=1.0
+precision=1.0
+recall=1.0
+f1=1.0
+```
+
+Interpretation:
+
+* This 8/8 result is a deployment result with logic fallback enabled.
+* It must not be reported as pure PoseConv3D model performance.
+* A separate model-only rerun should be kept for scientific reporting and ablation.
