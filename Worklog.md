@@ -1399,3 +1399,56 @@ elder_fall_7: model_unaware, max_pfall=0.2654
 `elder_fall_4` 更像阈值/策略边缘样本；`elder_fall_7` 更像模型泛化不足样本，后续若微调，应优先纳入困难正样本池。
 
 补充代码同步：`tools/run_real_video_eval.py` 已补充 `--draw-track-max-age` 透传，确保批量 overlay 同样使用“只绘制当前帧可见 track”的残影修复策略。
+
+### 10.17 红框/紫框显示策略修正与 `elder_fall` 重跑
+
+用户反馈：新版 overlay 观感变差，担心 `--draw-track-max-age 0` 导致框被漏画。复查代码与同一 `test8.mp4` 的新旧 summary 后确认：
+
+* 模型输入、概率、报警事件没有变化。
+* `test8.mp4` 新旧两次的 `max_pfall=0.9995`、`mean_pfall=0.2546`、`num_alerts=12`、track 列表均一致。
+* 变差主要来自 overlay 可视化：只画当前帧可见 track 会让短暂漏检帧上的红/紫框消失，肉眼看像“检测变差”。
+
+代码修正：
+
+```text
+inference/multitarget_realtime_demo.py
+```
+
+* `visible_snapshot()` 改为：普通 track 仍按 `--draw-track-max-age` 短缓冲显示。
+* 但满足 fall 显示条件的 track 必须继续画出来：
+  * `st.alerted`
+  * `st.alert_frames_left > 0`
+  * `st.smoothed_prob >= threshold`
+  * `pose_heuristic` 分数超过阈值
+* 默认 `--draw-track-max-age` 由 `0` 调整为 `3`，用于减少短时漏检闪断，同时避免拼接视频出现长时间普通旧骨架残留。
+
+有效新输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_fallboxes_20260620_232720
+```
+
+本次仍处理 11 个 `elder_fall` 视频，summary 与上一版一致：部署版检测 9/11，`elder_fall_4` 为阈值边缘样本，`elder_fall_7` 为模型不敏感样本。区别在 overlay：红框/紫框不再因短暂不可见而被过滤掉。
+
+服务器输出目录整理：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/MANIFEST_20260620.txt
+```
+
+保留有效输出：
+
+```text
+all_tests_color_overlay_20260620_171342
+fifty_fall_color_overlay_20260620_174107
+elder_fall_color_overlay_20260620_225822
+elder_fall_color_overlay_fallboxes_20260620_232720
+```
+
+只把无关的 `.ipynb_checkpoints` 移入：
+
+```text
+outputs/real_eval/_archive_misc_20260620_233500
+```
+
+未删除任何 `work_dirs/`、checkpoint、data 或有效 overlay 结果。

@@ -640,3 +640,33 @@ elder_fall_7.mp4: model_unaware, max_pfall=0.2654
 ```
 
 The other 9 videos were marked `detected`. This remains a deployment result with `model + pose_heuristic logic fallback`, not a pure PoseConv3D-only result.
+
+### Follow-up Overlay Rerun - Active Fall Boxes Always Drawn
+
+The `elder_fall` directory was rerun after fixing overlay filtering so active fall boxes are not dropped when a track is briefly not re-observed.
+
+Code behavior:
+
+* Normal non-fall tracks use the short `--draw-track-max-age` display window.
+* Active fall tracks are still drawn if they are alerted, in alert hold, above the model threshold, or above the pose-heuristic threshold.
+* This is an overlay/display fix. Model probabilities and alert summaries for the same video remain unchanged.
+
+New output:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_fallboxes_20260620_232720
+```
+
+Summary remained the same as the previous `elder_fall` batch:
+
+```text
+detected: 9/11
+elder_fall_4.mp4: just_below_threshold, max_pfall=0.4616
+elder_fall_7.mp4: model_unaware, max_pfall=0.2654
+```
+
+Server output manifest:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/MANIFEST_20260620.txt
+```
