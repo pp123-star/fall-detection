@@ -1076,12 +1076,12 @@ num_id_switches_handled: 3
 * `ProbabilityLogger` 新增 `heuristic_score` 和 `heuristic_reason` 字段。
 * `VideoSummaryBuilder` 新增 `max_pose_heuristic`、`topK_pose_heuristic`、`per_track_max_pose_heuristic`。
 * `tools/run_real_video_eval.py` 支持透传 `--pose-heuristic-alert`、`--pose-heuristic-thr`、`--pose-heuristic-min-frames`。
-* 事件日志后续也记录触发 `reason`，便于区分 `high_single` 模型报警和 `pose_heuristic` 规则兜底。
+* 事件日志同步记录触发 `reason`，便于区分 `high_single` 模型报警和 `pose_heuristic` 规则兜底。
 
 第三版服务器单视频复测输出：
 
 ```text
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510
 ```
 
 运行参数：
@@ -1129,10 +1129,11 @@ mean_top5_pose_heuristic: 1.0
 重要输出文件：
 
 ```text
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/overlays/2026-06-20_035837_overlay.mp4
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/probs/2026-06-20_035837_prob.jsonl
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/summaries/2026-06-20_035837_summary.json
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711/snapshots/2026-06-20_035837/fall_t7_f451.jpg
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510/overlays/2026-06-20_035837_overlay.mp4
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510/events/2026-06-20_035837_events.jsonl
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510/probs/2026-06-20_035837_prob.jsonl
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510/summaries/2026-06-20_035837_summary.json
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510/snapshots/2026-06-20_035837/fall_t7_f451.jpg
 ```
 
 后续建议：

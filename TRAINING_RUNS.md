@@ -373,6 +373,7 @@ Code commit:
 
 ```text
 8290858 Add pose heuristic fall fallback
+cb55a0b Record pose heuristic video diagnostic
 ```
 
 V3 change:
@@ -385,7 +386,7 @@ V3 change:
 Server run:
 
 ```text
-/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_20260620_164711
+/root/autodl-tmp/fall-detection/outputs/real_eval/single_035837_poseheur_v3_final_20260620_165510
 ```
 
 Command family:
