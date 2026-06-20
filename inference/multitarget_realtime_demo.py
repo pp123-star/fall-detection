@@ -1035,8 +1035,8 @@ def build_argparser():
     p.add_argument("--infer-every", type=int, default=6)
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--track-timeout", type=int, default=30)
-    p.add_argument("--draw-track-max-age", type=int, default=0,
-                   help="只绘制最近 N 帧内被重新观测到的 track；0 表示只画当前帧，避免拼接视频残留骨架")
+    p.add_argument("--draw-track-max-age", type=int, default=3,
+                   help="只绘制最近 N 帧内被重新观测到的 track；默认 3 帧，减少短时漏检闪断并避免拼接视频长时间残留骨架")
 
     # Track 合并(ID switch 处理)
     p.add_argument("--track-merge", action="store_true",
