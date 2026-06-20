@@ -629,6 +629,21 @@ class MultiTrackFallDetector:
     def snapshot(self) -> List[TrackState]:
         return list(self.tracks.values())
 
+    def visible_snapshot(self, frame_idx: int, max_age: int = 8,
+                         alert_max_age: int = 15) -> List[TrackState]:
+        """Return tracks that should still be drawn on the current frame."""
+        visible = []
+        max_age = max(0, int(max_age))
+        alert_max_age = max(max_age, int(alert_max_age))
+        for st in self.tracks.values():
+            age = frame_idx - st.last_seen_frame
+            if age <= max_age:
+                visible.append(st)
+                continue
+            if st.alerted and st.alert_frames_left > 0 and age <= alert_max_age:
+                visible.append(st)
+        return visible
+
     @property
     def active_count(self) -> int:
         return len(self.tracks)
@@ -992,8 +1007,13 @@ def run_multitarget_realtime(args):
             loop_ms = (time.time() - t_loop) * 1000
             fps_hist.append(1000.0 / max(loop_ms, 1e-6))
             cur_fps = float(np.mean(fps_hist))
+            visible_tracks = detector.visible_snapshot(
+                frame_idx,
+                max_age=args.draw_track_max_age,
+                alert_max_age=args.draw_alert_max_age,
+            )
             draw_multitrack_overlay(
-                frame, detector.snapshot(), args.threshold, args.kpt_thr,
+                frame, visible_tracks, args.threshold, args.kpt_thr,
                 cur_fps, detector.last_infer_ms, detector.active_count,
                 len(detector.alerted_ids), noid_dets=noid_dets,
             )
@@ -1097,6 +1117,10 @@ def build_argparser():
     p.add_argument("--infer-every", type=int, default=6)
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--track-timeout", type=int, default=30)
+    p.add_argument("--draw-track-max-age", type=int, default=8,
+                   help="仅用于 overlay: 普通 track 未重新观测超过 N 帧后不再绘制")
+    p.add_argument("--draw-alert-max-age", type=int, default=15,
+                   help="仅用于 overlay: 报警 track 未重新观测超过 N 帧后不再绘制")
 
     # Track 合并(ID switch 处理)
     p.add_argument("--track-merge", action="store_true",

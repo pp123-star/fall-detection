@@ -1598,3 +1598,43 @@ tools/run_real_video_eval.py
 ```
 
 注意：这是工程逻辑兜底，不是模型本体能力提升。若从头到尾都没有检测到人体骨架，仍需换更强 pose detector、调低 `--conf`、提高 `--imgsz`，或增加人体检测/分割兜底。
+
+### 10.21 Overlay 旧框残留修正
+
+用户反馈：当前人物已经离开画面后，识别框和骨架仍会停留很久，尤其在多人或拼接视频中会严重干扰后续画面判断。
+
+原因确认：
+
+* 之前为了恢复 17:20-18:00 版本的红框连续性，把 overlay 绘制恢复为 `detector.snapshot()`，即绘制 detector 内部保留的全部 track。
+* 后续批跑又将 `--track-timeout` 提高到 120，用于增强 ID 合并、跌倒后丢跟兜底和跟踪连续性。
+* 因此问题不在于当前跟踪能力差，而在于“内部保留 track”和“画面继续显示旧 track”没有拆开。
+
+已修改：
+
+```text
+inference/multitarget_realtime_demo.py
+tools/run_real_video_eval.py
+```
+
+新的处理方式：
+
+* 保留现有跟踪能力：`track_timeout`、`track_merge`、`lost_track_alert`、模型历史窗口和 summary 逻辑不变。
+* 新增仅用于 overlay 的 `visible_snapshot(frame_idx, max_age, alert_max_age)`。
+* 普通 track 如果连续若干帧未被重新观测到，就不再画在视频上。
+* 刚报警的 track 可比普通 track 多保留几帧，避免摔倒红框刚出现就闪断。
+* 批量脚本新增透传：
+
+```text
+--draw-track-max-age
+--draw-alert-max-age
+```
+
+默认建议：
+
+```text
+--track-timeout 120          # 内部跟踪/合并/丢跟兜底继续保留较长历史
+--draw-track-max-age 8       # 普通旧框不长期残留
+--draw-alert-max-age 15      # 报警框短暂保留，避免视觉闪烁
+```
+
+该修改只影响 overlay 可视化是否继续绘制旧 track，不改变模型输入、P(fall)、报警事件、summary 或训练 checkpoint。

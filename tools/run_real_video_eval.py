@@ -109,6 +109,8 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         "--max-persons", str(args.max_persons),
         "--infer-every", str(args.infer_every),
         "--track-timeout", str(args.track_timeout),
+        "--draw-track-max-age", str(args.draw_track_max_age),
+        "--draw-alert-max-age", str(args.draw_alert_max_age),
         "--threshold", str(args.threshold),
         "--alert-k", str(args.alert_k),
         "--alert-hold", str(args.alert_hold),
@@ -322,6 +324,8 @@ def main():
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--infer-every", type=int, default=6)
     p.add_argument("--track-timeout", type=int, default=30)
+    p.add_argument("--draw-track-max-age", type=int, default=8)
+    p.add_argument("--draw-alert-max-age", type=int, default=15)
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--alert-k", type=int, default=2)
     p.add_argument("--alert-hold", type=float, default=1.5)
