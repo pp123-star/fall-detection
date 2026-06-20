@@ -150,6 +150,7 @@ class TrackState:
     """
     track_id: int
     clip_len: int
+    display_id: Optional[int] = None
     source_fps: float = 30.0
     time_window_sec: float = 0.0
     recent_window: int = 10                # AlertPolicy 的 top-k 滑窗用
@@ -174,6 +175,8 @@ class TrackState:
     last_alert_reason: str = ""
 
     def __post_init__(self):
+        if self.display_id is None:
+            self.display_id = self.track_id
         if self.buffer is None:
             self.buffer = TimeAwareBuffer(
                 clip_len=self.clip_len,
@@ -199,6 +202,7 @@ class TrackState:
         """从 tombstone 继承历史 buffer + 概率状态。"""
         if tomb is None:
             return
+        self.display_id = int(getattr(tomb, "display_id", tomb.track_id))
         # buffer 迁移(从 tomb.buffer 继承最近若干帧)
         self.buffer.inherit_from(tomb.buffer)
         # 概率状态延续
@@ -210,6 +214,7 @@ class TrackState:
         """从刚断开的 active track 继承状态,用于处理同帧/短间隔 ID 切换。"""
         if other is None:
             return
+        self.display_id = int(other.display_id)
         self.buffer.inherit_from(other.buffer)
         self.last_prob = float(other.last_prob)
         self.smoothed_prob = float(other.smoothed_prob)
@@ -344,6 +349,7 @@ class MultiTrackFallDetector:
             "frame": frame_idx,
             "new_track_id": int(new_tid),
             "inherited_from": int(best_tid),
+            "display_id": int(best_st.display_id),
             "reason": best_reason,
         })
         del self.tracks[best_tid]
@@ -425,17 +431,17 @@ class MultiTrackFallDetector:
             # 记录:任何一次推理都写 prob log + summary
             if self.prob_logger is not None:
                 self.prob_logger.log(
-                    frame_idx=frame_idx, track_id=st.track_id,
+                    frame_idx=frame_idx, track_id=st.display_id,
                     raw_prob=raw_prob, smoothed_prob=st.smoothed_prob,
                     buffer_len=st.buffer.buffer_len, bbox=st.bbox,
                     alerted=decision["alert_onset"],
                     alert_reason=decision["reason"],
                 )
             if self.summary is not None:
-                self.summary.record_inference(st.track_id, raw_prob)
+                self.summary.record_inference(st.display_id, raw_prob)
                 if decision["alert_onset"]:
                     self.summary.record_alert(
-                        frame_idx=frame_idx, track_id=st.track_id,
+                        frame_idx=frame_idx, track_id=st.display_id,
                         prob=decision["triggering_prob"], reason=decision["reason"],
                     )
 
@@ -458,6 +464,7 @@ class MultiTrackFallDetector:
             if self.track_merger is not None:
                 self.track_merger.register_death(
                     track_id=tid, last_frame=st.last_seen_frame,
+                    display_id=st.display_id,
                     last_bbox=st.bbox, buffer=st.buffer,
                     last_smoothed_prob=st.smoothed_prob,
                     last_raw_prob=st.last_prob,
@@ -526,11 +533,11 @@ class MultiTrackFallDetector:
             if not st.alerted:
                 st.alerted = True
                 st.ever_alerted = True
-                self.alerted_ids.add(st.track_id)
+                self.alerted_ids.add(st.display_id)
                 alert_onset = True
                 if self.event_logger is not None:
                     self.event_logger.log(
-                        frame_idx=frame_idx, track_id=st.track_id,
+                        frame_idx=frame_idx, track_id=st.display_id,
                         fall_prob=trig_prob, bbox=st.bbox,
                         source=self.source_name, event="onset",
                         frame=frame,
@@ -615,7 +622,7 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
             x1, y1, x2, y2 = st.bbox.astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             status = "FALL" if is_fall else "NORMAL"
-            label = f"id:{st.track_id} {status} P(fall):{st.smoothed_prob:.2f}"
+            label = f"id:{st.display_id} {status} P(fall):{st.smoothed_prob:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
                 tag = "FALL"

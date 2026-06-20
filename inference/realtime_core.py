@@ -114,6 +114,7 @@ def bbox_center_dist_norm(a: np.ndarray, b: np.ndarray, img_diag: float) -> floa
 @dataclass
 class TombstoneTrack:
     track_id: int
+    display_id: int
     last_frame: int
     last_bbox: np.ndarray
     buffer: TimeAwareBuffer
@@ -142,6 +143,7 @@ class TrackMerger:
     def register_death(
         self,
         track_id: int,
+        display_id: Optional[int],
         last_frame: int,
         last_bbox: np.ndarray,
         buffer: TimeAwareBuffer,
@@ -153,6 +155,7 @@ class TrackMerger:
             return
         self.tombstones[track_id] = TombstoneTrack(
             track_id=track_id,
+            display_id=int(display_id if display_id is not None else track_id),
             last_frame=last_frame,
             last_bbox=np.asarray(last_bbox, dtype=np.float32).copy(),
             buffer=buffer,
@@ -206,6 +209,7 @@ class TrackMerger:
                 "frame": current_frame,
                 "new_track_id": int(new_track_id),
                 "inherited_from": int(best.track_id),
+                "display_id": int(best.display_id),
                 "reason": best_reason,
             }
         )
