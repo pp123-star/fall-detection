@@ -108,6 +108,7 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         "--clip-len", str(args.clip_len),
         "--max-persons", str(args.max_persons),
         "--infer-every", str(args.infer_every),
+        "--track-timeout", str(args.track_timeout),
         "--threshold", str(args.threshold),
         "--alert-k", str(args.alert_k),
         "--alert-hold", str(args.alert_hold),
@@ -142,6 +143,11 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         cmd += ["--pose-heuristic-alert",
                 "--pose-heuristic-thr", str(args.pose_heuristic_thr),
                 "--pose-heuristic-min-frames", str(args.pose_heuristic_min_frames)]
+    if args.lost_track_alert:
+        cmd += ["--lost-track-alert",
+                "--lost-track-min-gap", str(args.lost_track_min_gap),
+                "--lost-track-heuristic-thr", str(args.lost_track_heuristic_thr),
+                "--lost-track-model-thr", str(args.lost_track_model_thr)]
     if label is not None:
         cmd += ["--ground-truth", str(int(label))]
 
@@ -315,6 +321,7 @@ def main():
     p.add_argument("--clip-len", type=int, default=48)
     p.add_argument("--max-persons", type=int, default=5)
     p.add_argument("--infer-every", type=int, default=6)
+    p.add_argument("--track-timeout", type=int, default=30)
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--alert-k", type=int, default=2)
     p.add_argument("--alert-hold", type=float, default=1.5)
@@ -340,6 +347,11 @@ def main():
                    help="启用骨架几何兜底报警,用于快摔/翻倒但模型低分的真实视频")
     p.add_argument("--pose-heuristic-thr", type=float, default=0.62)
     p.add_argument("--pose-heuristic-min-frames", type=int, default=12)
+    p.add_argument("--lost-track-alert", action="store_true",
+                   help="启用低姿态/疑似跌倒后 track 消失的逻辑兜底报警")
+    p.add_argument("--lost-track-min-gap", type=int, default=8)
+    p.add_argument("--lost-track-heuristic-thr", type=float, default=0.45)
+    p.add_argument("--lost-track-model-thr", type=float, default=0.35)
 
     args = p.parse_args()
 

@@ -1526,3 +1526,75 @@ elder_fall_7.mp4: model_unaware, max_pfall=0.2654
 ```text
 outputs/real_eval/elder_fall_color_overlay_legacydraw_20260620_235056
 ```
+
+### 10.19 模型+逻辑同时触发时的 overlay 颜色规则
+
+用户建议：当模型判断摔倒和逻辑兜底判断摔倒同时发生时，框应统一显示红色，并在文字中同时标明模型和逻辑都给出了摔倒结论。
+
+已修改：
+
+```text
+inference/multitarget_realtime_demo.py
+```
+
+新的 overlay 颜色语义：
+
+```text
+green  = NORMAL
+red    = MODEL FALL，或 MODEL+LOGIC FALL
+purple = LOGIC FALL only
+```
+
+具体规则：
+
+* 只要模型信号参与判断，框使用红色。
+* 如果模型与逻辑同时成立，标签显示 `MODEL+LOGIC FALL P:<pfall> H:<heuristic>`。
+* 只有纯 `pose_heuristic` 逻辑兜底、模型未参与时，才使用紫色 `LOGIC FALL`。
+* HUD 右上角报警灯也改为：只要当前报警 track 中有模型信号，即显示红色；否则纯逻辑报警显示紫色。
+
+该修改只影响 overlay 可视化颜色和文字，不改变模型输入、概率、报警事件或 summary。
+
+### 10.20 跟踪丢失兜底策略
+
+用户反馈：若老人转身、跌倒、躺地后 YOLO pose/ByteTrack 跟踪丢失，后续画面中不再有框，模型也可能没有足够连续骨架判断摔倒。
+
+原因拆分：
+
+* 若人还在画面里但换了 ID，这是跟踪关联问题，可通过 `--track-merge`、更长 `--track-merge-gap`、更长 `--track-timeout` 缓解。
+* 若老人已经躺倒，YOLO pose 本身不再输出人体骨架，这是检测层丢失。PoseConv3D 没有新骨架输入，无法继续靠模型判断。
+* 因此要在工程层增加“跌倒姿态后 track 消失”的显式兜底，并在结果中标明这是逻辑兜底。
+
+代码新增：
+
+```text
+inference/multitarget_realtime_demo.py
+tools/run_real_video_eval.py
+```
+
+新增参数：
+
+```text
+--lost-track-alert
+--lost-track-min-gap
+--lost-track-heuristic-thr
+--lost-track-model-thr
+```
+
+逻辑：
+
+* 某个 track 已经有模型/骨架逻辑的跌倒前兆；
+* 随后连续 `lost_track_min_gap` 帧没有被 pose 检测重新观测到；
+* 若消失前 `heuristic_score >= lost_track_heuristic_thr` 或 `smoothed_prob >= lost_track_model_thr`，触发 `track_lost_after_fall_pose` 报警；
+* 报警事件、summary、overlay 都记录该原因。
+
+同时修复批量脚本没有透传 `--track-timeout` 的问题，后续可针对老人监控/躺倒场景把 track 保留时间调长，例如：
+
+```bash
+--track-timeout 120 \
+--lost-track-alert \
+--lost-track-min-gap 8 \
+--lost-track-heuristic-thr 0.45 \
+--lost-track-model-thr 0.35
+```
+
+注意：这是工程逻辑兜底，不是模型本体能力提升。若从头到尾都没有检测到人体骨架，仍需换更强 pose detector、调低 `--conf`、提高 `--imgsz`，或增加人体检测/分割兜底。

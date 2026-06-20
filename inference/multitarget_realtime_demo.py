@@ -176,6 +176,7 @@ class TrackState:
     alert_frames_left: int = 0
     ever_alerted: bool = False
     last_alert_reason: str = ""
+    lost_track_alerted: bool = False
 
     def __post_init__(self):
         if self.display_id is None:
@@ -229,6 +230,7 @@ class TrackState:
         self.alert_frames_left = int(other.alert_frames_left)
         self.ever_alerted = bool(other.ever_alerted)
         self.last_alert_reason = str(other.last_alert_reason or "")
+        self.lost_track_alerted = bool(other.lost_track_alerted)
 
 
 # ============================================================
@@ -265,6 +267,10 @@ class MultiTrackFallDetector:
         summary: Optional[VideoSummaryBuilder] = None,
         pose_heuristic: Optional[PoseHeuristicScorer] = None,
         pose_heuristic_thr: float = 1.01,
+        lost_track_alert: bool = False,
+        lost_track_min_gap: int = 8,
+        lost_track_heuristic_thr: float = 0.45,
+        lost_track_model_thr: float = 0.35,
         # 兼容字段
         event_logger=None,
     ):
@@ -287,6 +293,10 @@ class MultiTrackFallDetector:
         self.summary = summary
         self.pose_heuristic = pose_heuristic
         self.pose_heuristic_thr = float(pose_heuristic_thr)
+        self.lost_track_alert = bool(lost_track_alert)
+        self.lost_track_min_gap = max(1, int(lost_track_min_gap))
+        self.lost_track_heuristic_thr = float(lost_track_heuristic_thr)
+        self.lost_track_model_thr = float(lost_track_model_thr)
         self.event_logger = event_logger
 
         self.tracks: Dict[int, TrackState] = {}
@@ -466,6 +476,44 @@ class MultiTrackFallDetector:
         if infer_ms_accum > 0:
             self.last_infer_ms = infer_ms_accum
 
+        # 2.5 跌倒姿态后跟踪丢失:躺倒/遮挡导致 pose 不再输出时的工程兜底
+        if self.lost_track_alert:
+            for st in self.tracks.values():
+                age = frame_idx - st.last_seen_frame
+                if age < self.lost_track_min_gap or st.lost_track_alerted or st.ever_alerted:
+                    continue
+                model_signal = st.smoothed_prob >= self.lost_track_model_thr
+                logic_signal = st.heuristic_score >= self.lost_track_heuristic_thr
+                if not (model_signal or logic_signal):
+                    continue
+                reasons = [f"lost_gap={age}"]
+                if model_signal:
+                    reasons.append(f"pfall={st.smoothed_prob:.2f}")
+                if logic_signal:
+                    reasons.append(f"heur={st.heuristic_score:.2f}")
+                    if st.heuristic_reason:
+                        reasons.append(st.heuristic_reason)
+                reason = "track_lost_after_fall_pose:" + ",".join(reasons)
+                trigger = max(st.smoothed_prob, st.heuristic_score)
+                st.alerted = True
+                st.ever_alerted = True
+                st.lost_track_alerted = True
+                st.alert_frames_left = max(st.alert_frames_left, self.alert_hold_frames)
+                st.last_alert_reason = reason
+                self.alerted_ids.add(st.display_id)
+                if self.event_logger is not None:
+                    self.event_logger.log(
+                        frame_idx=frame_idx, track_id=st.display_id,
+                        fall_prob=trigger, bbox=st.bbox,
+                        source=self.source_name, event="onset",
+                        reason=reason, frame=frame,
+                    )
+                if self.summary is not None:
+                    self.summary.record_alert(
+                        frame_idx=frame_idx, track_id=st.display_id,
+                        prob=trigger, reason=reason,
+                    )
+
         # 3. 报警横幅倒计时
         for st in self.tracks.values():
             if st.alert_frames_left > 0:
@@ -476,7 +524,8 @@ class MultiTrackFallDetector:
 
         # 4. 清理过期 track(消亡时若有合并器,放入 tombstones)
         stale = [tid for tid, st in self.tracks.items()
-                 if frame_idx - st.last_seen_frame > self.track_timeout]
+                 if frame_idx - st.last_seen_frame > self.track_timeout
+                 and not (st.alerted and st.alert_frames_left > 0)]
         for tid in stale:
             st = self.tracks[tid]
             if self.track_merger is not None:
@@ -649,20 +698,23 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
 
     for st in tracks:
         logic_alert = _is_logic_alert(st)
-        model_alert = st.alerted and not logic_alert
         model_score_fall = st.smoothed_prob >= threshold
+        model_alert = (st.alerted and not logic_alert) or model_score_fall
+        model_and_logic = model_alert and logic_alert
         is_fall = st.alerted or model_score_fall
-        if logic_alert:
-            color = COLOR_LOGIC_FALL
-        elif model_alert or model_score_fall:
+        if model_alert:
             color = COLOR_FALL
+        elif logic_alert:
+            color = COLOR_LOGIC_FALL
         else:
             color = COLOR_NORMAL
         _draw_skeleton(frame, st.last_kpts, st.last_scores, color, kpt_thr)
         if st.bbox is not None and np.any(st.bbox):
             x1, y1, x2, y2 = st.bbox.astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            if logic_alert:
+            if model_and_logic:
+                status = "MODEL+LOGIC FALL"
+            elif logic_alert:
                 status = "LOGIC FALL"
             elif is_fall:
                 status = "MODEL FALL"
@@ -673,7 +725,13 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
                 label += f" H:{st.heuristic_score:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
-                if logic_alert:
+                if model_and_logic:
+                    tag = f"MODEL+LOGIC FALL P:{st.smoothed_prob:.2f} H:{st.heuristic_score:.2f}"
+                    _draw_label(frame, tag, (x1, y2 + 24), COLOR_FALL, scale=0.72)
+                    reason = _short_logic_reason(st.last_alert_reason)
+                    if reason:
+                        _draw_label(frame, reason, (x1, y2 + 48), COLOR_FALL, scale=0.52)
+                elif logic_alert:
                     tag = f"LOGIC FALL H:{st.heuristic_score:.2f}"
                     reason = _short_logic_reason(st.last_alert_reason)
                     _draw_label(frame, tag, (x1, y2 + 24), COLOR_LOGIC_FALL, scale=0.78)
@@ -700,18 +758,29 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
     cv2.putText(frame, hud, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255), 1, cv2.LINE_AA)
     if any(st.alerted for st in tracks):
-        light = COLOR_LOGIC_FALL if any(_is_logic_alert(st) for st in tracks) else COLOR_FALL
+        light = COLOR_FALL if any(
+            (st.alerted and not _is_logic_alert(st)) or st.smoothed_prob >= threshold
+            for st in tracks
+        ) else COLOR_LOGIC_FALL
         cv2.circle(frame, (W - 20, 18), 8, light, -1)
 
 
 def _is_logic_alert(st: TrackState) -> bool:
-    return bool(st.alerted and str(st.last_alert_reason or "").startswith("pose_heuristic"))
+    reason = str(st.last_alert_reason or "")
+    return bool(
+        st.alerted
+        and (
+            reason.startswith("pose_heuristic")
+            or reason.startswith("track_lost_after_fall_pose")
+        )
+    )
 
 
 def _short_logic_reason(reason: str) -> str:
     if not reason:
         return ""
     reason = str(reason).replace("pose_heuristic:", "")
+    reason = reason.replace("track_lost_after_fall_pose:", "")
     keys = []
     for part in reason.split(","):
         name = part.split("=", 1)[0].strip()
@@ -894,6 +963,10 @@ def run_multitarget_realtime(args):
         summary=summary,
         pose_heuristic=pose_heuristic,
         pose_heuristic_thr=args.pose_heuristic_thr,
+        lost_track_alert=args.lost_track_alert,
+        lost_track_min_gap=args.lost_track_min_gap,
+        lost_track_heuristic_thr=args.lost_track_heuristic_thr,
+        lost_track_model_thr=args.lost_track_model_thr,
         event_logger=event_logger,
     )
 
@@ -1053,6 +1126,14 @@ def build_argparser():
                    help="骨架启发式分数达到该值时报警,仅在 --pose-heuristic-alert 时生效")
     p.add_argument("--pose-heuristic-min-frames", type=int, default=12,
                    help="启发式评分至少需要的历史骨架帧数")
+    p.add_argument("--lost-track-alert", action="store_true",
+                   help="启用低姿态/疑似跌倒后 track 消失的逻辑兜底报警")
+    p.add_argument("--lost-track-min-gap", type=int, default=8,
+                   help="track 连续消失至少 N 帧后才考虑 lost-track 兜底")
+    p.add_argument("--lost-track-heuristic-thr", type=float, default=0.45,
+                   help="track 消失前启发式分数达到该值时触发 lost-track 兜底")
+    p.add_argument("--lost-track-model-thr", type=float, default=0.35,
+                   help="track 消失前模型平滑分数达到该值时触发 lost-track 兜底")
 
     # YOLO
     p.add_argument("--conf", type=float, default=0.25)

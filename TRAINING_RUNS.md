@@ -696,3 +696,50 @@ detected: 9/11
 elder_fall_4.mp4: just_below_threshold, max_pfall=0.4616
 elder_fall_7.mp4: model_unaware, max_pfall=0.2654
 ```
+
+### Overlay Color Rule Update - Model + Logic
+
+Overlay color semantics were refined after user feedback:
+
+```text
+green  = normal
+red    = model fall, including model+logic fall
+purple = logic-only fall fallback
+```
+
+When both model and pose-heuristic logic indicate fall, the box is red and the label shows:
+
+```text
+MODEL+LOGIC FALL P:<pfall> H:<heuristic>
+```
+
+This is a visualization-only change. It does not alter model probabilities, alert decisions, or summary metrics.
+
+### Tracking-Loss Fallback
+
+A new optional deployment fallback was added for cases where the pose tracker loses the person after a suspicious low/fall posture:
+
+```text
+--lost-track-alert
+--lost-track-min-gap
+--lost-track-heuristic-thr
+--lost-track-model-thr
+```
+
+The batch runner now also passes:
+
+```text
+--track-timeout
+```
+
+Recommended diagnostic settings for elderly surveillance clips with post-fall pose loss:
+
+```bash
+--track-timeout 120 \
+--lost-track-alert \
+--lost-track-min-gap 8 \
+--lost-track-heuristic-thr 0.45 \
+--lost-track-model-thr 0.35
+```
+
+This is an engineering fallback recorded as `track_lost_after_fall_pose`, not a pure PoseConv3D model prediction.
