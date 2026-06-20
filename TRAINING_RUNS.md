@@ -246,3 +246,61 @@ Follow-up:
 * For real-video inference, test 30fps resampling or time-based clip sampling so the action window covers enough real time.
 * Try more sensitive deployment thresholds/alert settings before retraining, then use confirmed misses such as `test4.mp4` and `test7.mp4` as real hard-positive samples for fine-tuning.
 * Add per-inference probability logging for real videos, including max/mean/top-k `P(fall)`, so missed videos can be diagnosed quantitatively instead of relying only on alert events.
+
+Real-video diagnostic rerun after inference upgrade:
+
+* Date: 2026-06-20.
+* Code commit on server:
+
+```text
+e56cccd Use local MMAction2 source for inference
+```
+
+* Command family: `tools/run_real_video_eval.py` with time-window buffer, track merge, multi-policy alerting, probability logging, and summary output.
+* Parameters:
+
+```text
+checkpoint: work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth
+time_window_sec: 1.6
+track_merge: true
+threshold: 0.45
+high_thr: 0.7
+topk_mean_thr: 0.5
+infer_every: 2
+max_persons: 5
+```
+
+* Server output directory:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749
+```
+
+* Output artifacts include `summary.csv`, `failure_cases.csv`, `metrics.json`, per-video overlays, per-inference probability logs, per-video summaries, snapshots, and probability curve PNGs.
+
+| Video | Ground truth | Diagnosis | Detection | Max P(fall) | Mean top5 P(fall) | Event |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| `test4.mp4` | fall | `model_unaware` | missed | 0.1134 | 0.0496 | none |
+| `test5.mp4` | fall | `detected` | detected | 0.9987 | 0.9979 | frame 182, track 2, event P=0.7711 |
+| `test6.mp4` | fall | `detected` | detected | 0.9998 | 0.9997 | frame 213, track 1, event P=0.5675 |
+| `test7.mp4` | fall | `model_unaware` | missed | 0.0569 | 0.0504 | none |
+
+Metric summary:
+
+```text
+TP=2
+FP=0
+TN=0
+FN=2
+accuracy=0.5000
+precision=1.0000
+recall=0.5000
+f1=0.6667
+```
+
+Interpretation:
+
+* The upgraded inference pipeline technically works and now logs quantitative probabilities for missed videos.
+* `test5.mp4` and `test6.mp4` remain clear detections, with max `P(fall)` near 1.0.
+* `test4.mp4` and `test7.mp4` remain missed even after a 1.6-second time window and more sensitive alert policy; their max probabilities are very low, so they should be treated as `model_unaware` hard positives rather than simple threshold misses.
+* Next model-improvement step should be fine-tuning with real hard-positive samples such as `test4.mp4` and `test7.mp4`, plus hard negatives. When starting any future training/fine-tuning run on the server, use `screen` so the web terminal can attach to the progress, for example `screen -S falldet-finetune` and `screen -x falldet-finetune`.

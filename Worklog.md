@@ -842,3 +842,117 @@ ModuleNotFoundError: No module named 'mmaction.models.localizers.drn'
 * `tools/run_real_video_eval.py` 在 `subprocess.run(...)` 时显式给子进程传入包含 `mmaction2_src` 的 `PYTHONPATH`。
 
 该修复只影响代码导入路径，不删除、不移动、不覆盖服务器上的 `work_dirs/`、checkpoint、`data/` 或已有 `outputs/`。
+
+### 10.8 test4-test7 推荐策略服务器复测结果
+
+服务器已同步到：
+
+```text
+e56cccd Use local MMAction2 source for inference
+```
+
+本次运行未删除服务器训练产物，未删除 `work_dirs/`、checkpoint、`data/` 或旧 `outputs/`。之前阻塞 `git pull` 的服务器本地代码冲突文件已保存为 stash：
+
+```text
+stash@{0}: On main: before-079b5dc-server-conflicts
+```
+
+本次输入目录使用软链接，只包含 `test4-test7`：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval_inputs/test4567
+```
+
+运行命令要点：
+
+```bash
+python tools/run_real_video_eval.py \
+    --video-dir outputs/real_eval_inputs/test4567 \
+    --labels-csv outputs/real_eval_inputs/test4567/labels.csv \
+    --config configs/posec3d_fall_binary.py \
+    --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+    --out-dir outputs/real_eval/test4567_recommended_20260620_154749 \
+    --time-window-sec 1.6 \
+    --track-merge \
+    --threshold 0.45 \
+    --high-thr 0.7 \
+    --topk-mean-thr 0.5 \
+    --infer-every 2 \
+    --max-persons 5
+```
+
+输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749
+```
+
+该目录约 `95 MB`，主要文件包括：
+
+```text
+summary.csv
+failure_cases.csv
+metrics.json
+overlays/test4_overlay.mp4
+overlays/test5_overlay.mp4
+overlays/test6_overlay.mp4
+overlays/test7_overlay.mp4
+probs/test4_prob.jsonl
+probs/test5_prob.jsonl
+probs/test6_prob.jsonl
+probs/test7_prob.jsonl
+curves/test4.png
+curves/test5.png
+curves/test6.png
+curves/test7.png
+summaries/test4_summary.json
+summaries/test5_summary.json
+summaries/test6_summary.json
+summaries/test7_summary.json
+```
+
+汇总指标：
+
+```text
+num_with_gt: 4
+TP: 2
+FP: 0
+TN: 0
+FN: 2
+accuracy: 0.5
+precision: 1.0
+recall: 0.5
+f1: 0.6667
+```
+
+逐视频结果：
+
+| Video | GT | Diagnosis | Alerts | Max P(fall) | Mean top5 P(fall) | Notes |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| `test4.mp4` | 1 | `model_unaware` | 0 | 0.1134 | 0.0496 | 全程低分，推荐作为困难正样本微调 |
+| `test5.mp4` | 1 | `detected` | 1 | 0.9987 | 0.9979 | frame 182, track 2, event prob 0.7711 |
+| `test6.mp4` | 1 | `detected` | 1 | 0.9998 | 0.9997 | frame 213, track 1, event prob 0.5675 |
+| `test7.mp4` | 1 | `model_unaware` | 0 | 0.0569 | 0.0504 | 全程低分，推荐作为困难正样本微调 |
+
+事件日志：
+
+```json
+{"source": "outputs/real_eval_inputs/test4567/test5.mp4", "frame_idx": 182, "track_id": 2, "fall_prob": 0.7711, "event": "onset"}
+{"source": "outputs/real_eval_inputs/test4567/test6.mp4", "frame_idx": 213, "track_id": 1, "fall_prob": 0.5675, "event": "onset"}
+```
+
+概率曲线已生成：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749/curves/test4.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749/curves/test5.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749/curves/test6.png
+/root/autodl-tmp/fall-detection/outputs/real_eval/test4567_recommended_20260620_154749/curves/test7.png
+```
+
+结论：
+
+* 推理升级后的推荐策略仍检出 `test5/test6`，且概率峰值接近 1.0。
+* `test4/test7` 即使使用 1.6 秒时间窗口、track merge、低阈值和 top-k 策略，最高 `P(fall)` 仍低于 0.12，属于模型不识别而不是阈值/去抖问题。
+* 后续应把 `test4/test7` 作为真实困难正样本，配合真实困难负样本做微调；不建议继续只靠阈值扫描解决这两个样本。
+* 下次启动训练时必须使用 `screen`，例如 `screen -S falldet-finetune`，方便网页端通过 `screen -x falldet-finetune` 查看训练进度。
