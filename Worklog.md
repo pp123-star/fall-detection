@@ -1306,3 +1306,96 @@ vis/
 ```
 
 原因：这些是上游可下载/可再生成内容或大体积输出，其中 `yolo26x-pose.pt` 超过 GitHub 普通单文件 100 MB 限制。已新增 `ARTIFACTS_MANIFEST.md` 记录恢复边界和本地备份包位置。
+
+### 10.16 `elder_fall` 新增真实视频批量重跑
+
+按用户要求，服务器新增目录：
+
+```text
+/root/autodl-tmp/fall-detection/data/real_test/elder_fall
+```
+
+共 11 个视频：
+
+```text
+elder_fall_1.mp4
+elder_fall_2.mp4
+elder_fall_3.mp4
+elder_fall_4.mp4
+elder_fall_5.mp4
+elder_fall_6.mp4
+elder_fall_7.mp4
+elder_fall_8.mp4
+elder_fall_9.mp4
+test8.mp4
+test9.mp4
+```
+
+运行方式：使用 `screen` 启动一次批量任务，`tools/run_real_video_eval.py` 会在一个进程中顺序处理目录内所有视频。没有并行开多个 GPU 任务；单 4090 上并行跑多个视频通常会抢显存和降低吞吐。
+
+正确环境：
+
+```bash
+/root/miniconda3/bin/conda run -n falldet python tools/run_real_video_eval.py ...
+```
+
+注意：base Python `/root/miniconda3/bin/python` 缺少 `cv2`，不能用于本项目推理。
+
+最终有效输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_20260620_225822
+```
+
+本次参数：
+
+```bash
+conda run -n falldet python tools/run_real_video_eval.py \
+  --video-dir data/real_test/elder_fall \
+  --config configs/posec3d_fall_binary.py \
+  --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+  --pose-weights yolo26x-pose.pt \
+  --device cuda:0 \
+  --out-dir outputs/real_eval/elder_fall_color_overlay_20260620_225822 \
+  --timeout-sec 1800 \
+  --time-window-sec 1.6 \
+  --track-merge \
+  --threshold 0.45 \
+  --high-thr 0.7 \
+  --topk-mean-thr 0.5 \
+  --infer-every 2 \
+  --max-persons 5 \
+  --pose-heuristic-alert \
+  --pose-heuristic-thr 0.62 \
+  --draw-track-max-age 0
+```
+
+输出文件：
+
+```text
+overlays/*.mp4
+events/*.jsonl
+probs/*.jsonl
+summaries/*.json
+summary.csv
+failure_cases.csv
+metrics.json
+```
+
+因为本次未提供 labels.csv，`metrics.json` 为空 `{}`。若按目录名暂时把 11 个视频都当作摔倒正样本观察，则部署版 `model + pose_heuristic` 检出 9/11。
+
+摘要：
+
+```text
+detected:
+elder_fall_1, elder_fall_2, elder_fall_3, elder_fall_5, elder_fall_6,
+elder_fall_8, elder_fall_9, test8, test9
+
+not detected / needs review:
+elder_fall_4: just_below_threshold, max_pfall=0.4616
+elder_fall_7: model_unaware, max_pfall=0.2654
+```
+
+`elder_fall_4` 更像阈值/策略边缘样本；`elder_fall_7` 更像模型泛化不足样本，后续若微调，应优先纳入困难正样本池。
+
+补充代码同步：`tools/run_real_video_eval.py` 已补充 `--draw-track-max-age` 透传，确保批量 overlay 同样使用“只绘制当前帧可见 track”的残影修复策略。

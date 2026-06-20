@@ -570,3 +570,73 @@ vis/
 ```
 
 See `ARTIFACTS_MANIFEST.md` for restore boundaries and the local server backup tarball path.
+
+## 2026-06-20 - Elder Fall Real-Test Batch Rerun
+
+Input directory:
+
+```text
+/root/autodl-tmp/fall-detection/data/real_test/elder_fall
+```
+
+Output directory:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_color_overlay_20260620_225822
+```
+
+Runtime note:
+
+* Use conda environment `falldet`.
+* Do not use base Python; it lacks `cv2`.
+* The batch script runs multiple videos sequentially in one process. It does not launch multiple concurrent GPU inference jobs.
+
+Command family:
+
+```bash
+conda run -n falldet python tools/run_real_video_eval.py \
+  --video-dir data/real_test/elder_fall \
+  --config configs/posec3d_fall_binary.py \
+  --ckpt work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth \
+  --pose-weights yolo26x-pose.pt \
+  --device cuda:0 \
+  --out-dir outputs/real_eval/elder_fall_color_overlay_20260620_225822 \
+  --timeout-sec 1800 \
+  --time-window-sec 1.6 \
+  --track-merge \
+  --threshold 0.45 \
+  --high-thr 0.7 \
+  --topk-mean-thr 0.5 \
+  --infer-every 2 \
+  --max-persons 5 \
+  --pose-heuristic-alert \
+  --pose-heuristic-thr 0.62 \
+  --draw-track-max-age 0
+```
+
+Videos processed:
+
+```text
+elder_fall_1.mp4
+elder_fall_2.mp4
+elder_fall_3.mp4
+elder_fall_4.mp4
+elder_fall_5.mp4
+elder_fall_6.mp4
+elder_fall_7.mp4
+elder_fall_8.mp4
+elder_fall_9.mp4
+test8.mp4
+test9.mp4
+```
+
+No labels CSV was supplied, so `metrics.json` is `{}`. If these 11 videos are treated as fall-positive inspection samples, the deployment pipeline detected 9/11.
+
+Review points:
+
+```text
+elder_fall_4.mp4: just_below_threshold, max_pfall=0.4616
+elder_fall_7.mp4: model_unaware, max_pfall=0.2654
+```
+
+The other 9 videos were marked `detected`. This remains a deployment result with `model + pose_heuristic logic fallback`, not a pure PoseConv3D-only result.
