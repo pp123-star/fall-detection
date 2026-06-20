@@ -8,7 +8,8 @@ inference/realtime_core.py — 真实视频/实时推理的核心组件
   2. TrackMerger           — 处理 ByteTrack 快速动作下的 ID 切换(test7.mp4 那种)
   3. AlertPolicy           — 多策略报警(high 单次 / mid 连续 / top-k 平均)替代单一阈值
   4. ProbabilityLogger     — 每次推理都记 raw/smoothed 概率,未报警视频也能事后诊断
-  5. VideoSummaryBuilder   — 视频结束时聚合 max/top-k/mean/疑似 ID switch 等诊断信息
+  5. PoseHeuristicScorer   — 用骨架几何兜底识别快摔/翻倒等模型低分片段
+  6. VideoSummaryBuilder   — 视频结束时聚合 max/top-k/mean/疑似 ID switch 等诊断信息
 
 设计原则:
   - 纯 Python + numpy,不依赖 cv2/torch/mmaction;便于单元测试
@@ -280,6 +281,162 @@ class AlertPolicy:
         return AlertDecision(False, "", smoothed_prob)
 
 
+@dataclass
+class PoseHeuristicResult:
+    score: float
+    reasons: List[str]
+    features: dict
+
+
+class PoseHeuristicScorer:
+    """基于 COCO17 骨架的轻量兜底评分。
+
+    目的不是替代 PoseConv3D,而是在真实视频里出现"骨架明显跌倒,但模型低分"
+    的短促动作时给报警策略一个独立信号。默认由 CLI 关闭。
+    """
+
+    def __init__(self, kpt_thr: float = 0.3, min_frames: int = 12):
+        self.kpt_thr = float(kpt_thr)
+        self.min_frames = max(4, int(min_frames))
+
+    def score(self, kpts_seq, scores_seq) -> PoseHeuristicResult:
+        kpts = list(kpts_seq or [])
+        scores = list(scores_seq or [])
+        if len(kpts) < self.min_frames or len(kpts) != len(scores):
+            return PoseHeuristicResult(0.0, ["insufficient_history"], {})
+
+        posture = []
+        hip_y = []
+        skel_h = []
+        leg_raise = []
+
+        for k, s in zip(kpts, scores):
+            k = np.asarray(k, dtype=np.float32)
+            s = np.asarray(s, dtype=np.float32)
+            if k.shape[0] < 17 or s.shape[0] < 17:
+                continue
+
+            valid = s >= self.kpt_thr
+            if valid.sum() < 7:
+                continue
+
+            ys = k[valid, 1]
+            xs = k[valid, 0]
+            height = float(max(ys.max() - ys.min(), 1.0))
+            width = float(max(xs.max() - xs.min(), 1.0))
+            skel_h.append(height)
+
+            shoulder = self._midpoint(k, s, 5, 6)
+            hip = self._midpoint(k, s, 11, 12)
+            if shoulder is not None and hip is not None:
+                vec = shoulder - hip
+                angle = float(np.degrees(np.arctan2(abs(vec[0]), abs(vec[1]) + 1e-6)))
+                aspect = width / height
+                posture.append((angle, aspect))
+                hip_y.append(float(hip[1]))
+
+                raised = 0.0
+                for j in (13, 14, 15, 16):
+                    if s[j] >= self.kpt_thr and k[j, 1] < hip[1] - 0.18 * height:
+                        raised = 1.0
+                        break
+                leg_raise.append(raised)
+
+        if len(posture) < max(4, self.min_frames // 2):
+            return PoseHeuristicResult(0.0, ["low_pose_confidence"], {})
+
+        angles = np.asarray([p[0] for p in posture], dtype=np.float32)
+        aspects = np.asarray([p[1] for p in posture], dtype=np.float32)
+        hip_y_arr = np.asarray(hip_y, dtype=np.float32)
+        heights = np.asarray(skel_h[-len(hip_y_arr):], dtype=np.float32)
+
+        recent_n = max(3, min(8, len(angles) // 3))
+        early_n = max(3, min(8, len(angles) // 3))
+        recent_angle = float(np.mean(angles[-recent_n:]))
+        recent_aspect = float(np.mean(aspects[-recent_n:]))
+        early_angle = float(np.mean(angles[:early_n]))
+        early_aspect = float(np.mean(aspects[:early_n]))
+        angle_delta = recent_angle - early_angle
+        aspect_delta = recent_aspect - early_aspect
+        recent_leg_raise = float(np.mean(leg_raise[-recent_n:])) if leg_raise else 0.0
+        ref_h = float(np.median(heights)) if heights.size else 1.0
+        hip_drop = float(np.mean(hip_y_arr[-recent_n:]) - np.mean(hip_y_arr[:early_n]))
+        hip_drop_norm = hip_drop / max(ref_h, 1.0)
+
+        angle_score = self._ramp(recent_angle, 45.0, 78.0)
+        angle_change_score = self._ramp(angle_delta, 18.0, 55.0)
+        aspect_score = self._ramp(recent_aspect, 0.85, 1.45)
+        aspect_change_score = self._ramp(aspect_delta, 0.18, 0.65)
+        drop_score = self._ramp(hip_drop_norm, 0.14, 0.45)
+        leg_score = float(np.clip(recent_leg_raise, 0.0, 1.0))
+
+        signals = [
+            angle_score >= 0.55,
+            angle_change_score >= 0.55,
+            aspect_score >= 0.55,
+            aspect_change_score >= 0.55,
+            drop_score >= 0.55,
+            leg_score >= 0.50,
+        ]
+        signal_count = int(sum(signals))
+
+        score = max(
+            0.52 * angle_score + 0.30 * drop_score + 0.18 * aspect_score,
+            0.45 * angle_score + 0.30 * leg_score + 0.25 * drop_score,
+            0.42 * aspect_score + 0.33 * drop_score + 0.25 * angle_score,
+            0.35 * angle_change_score + 0.35 * aspect_change_score + 0.30 * leg_score,
+        )
+        if signal_count < 2:
+            score = min(score, 0.55)
+        score = float(np.clip(score, 0.0, 1.0))
+
+        reasons = []
+        if angle_score >= 0.55:
+            reasons.append(f"torso_tilt={recent_angle:.1f}")
+        if angle_change_score >= 0.55:
+            reasons.append(f"tilt_delta={angle_delta:.1f}")
+        if aspect_score >= 0.55:
+            reasons.append(f"wide_pose={recent_aspect:.2f}")
+        if aspect_change_score >= 0.55:
+            reasons.append(f"wide_delta={aspect_delta:.2f}")
+        if drop_score >= 0.55:
+            reasons.append(f"hip_drop={hip_drop_norm:.2f}")
+        if leg_score >= 0.50:
+            reasons.append(f"leg_raised={recent_leg_raise:.2f}")
+        if not reasons:
+            reasons.append("weak_pose_signal")
+
+        return PoseHeuristicResult(
+            score=score,
+            reasons=reasons,
+            features={
+                "torso_angle_deg": round(recent_angle, 3),
+                "torso_angle_delta_deg": round(angle_delta, 3),
+                "pose_aspect": round(recent_aspect, 3),
+                "pose_aspect_delta": round(aspect_delta, 3),
+                "hip_drop_norm": round(hip_drop_norm, 3),
+                "leg_raise": round(recent_leg_raise, 3),
+                "signal_count": signal_count,
+            },
+        )
+
+    def _midpoint(self, kpts: np.ndarray, scores: np.ndarray, a: int, b: int):
+        pts = []
+        if scores[a] >= self.kpt_thr:
+            pts.append(kpts[a])
+        if scores[b] >= self.kpt_thr:
+            pts.append(kpts[b])
+        if not pts:
+            return None
+        return np.mean(np.asarray(pts, dtype=np.float32), axis=0)
+
+    @staticmethod
+    def _ramp(x: float, lo: float, hi: float) -> float:
+        if hi <= lo:
+            return 0.0
+        return float(np.clip((x - lo) / (hi - lo), 0.0, 1.0))
+
+
 class ProbabilityLogger:
     """记录每一次动作分类概率,让未报警视频也能做事后诊断。"""
 
@@ -296,6 +453,8 @@ class ProbabilityLogger:
             "track_id",
             "raw_prob",
             "smoothed_prob",
+            "heuristic_score",
+            "heuristic_reason",
             "buffer_len",
             "bbox_x1",
             "bbox_y1",
@@ -321,6 +480,8 @@ class ProbabilityLogger:
         bbox: np.ndarray,
         alerted: bool = False,
         alert_reason: str = "",
+        heuristic_score: float = 0.0,
+        heuristic_reason: str = "",
     ):
         if self._fh is None:
             return
@@ -332,6 +493,8 @@ class ProbabilityLogger:
             "track_id": int(track_id),
             "raw_prob": round(float(raw_prob), 6),
             "smoothed_prob": round(float(smoothed_prob), 6),
+            "heuristic_score": round(float(heuristic_score), 6),
+            "heuristic_reason": str(heuristic_reason or ""),
             "buffer_len": int(buffer_len),
             "bbox_x1": float(bbox[0]),
             "bbox_y1": float(bbox[1]),
@@ -359,7 +522,9 @@ class VideoSummaryBuilder:
         self.source = source
         self.ground_truth = ground_truth
         self.raw_probs: List[float] = []
+        self.heuristic_scores: List[float] = []
         self.per_track_probs: Dict[int, List[float]] = {}
+        self.per_track_heuristics: Dict[int, List[float]] = {}
         self.alerts: List[dict] = []
         self.num_id_switches_handled = 0
         self.total_frames = 0
@@ -367,9 +532,11 @@ class VideoSummaryBuilder:
         self.error: Optional[str] = None
         self.start_time = time.time()
 
-    def record_inference(self, track_id: int, raw_prob: float):
+    def record_inference(self, track_id: int, raw_prob: float, heuristic_score: float = 0.0):
         self.raw_probs.append(float(raw_prob))
+        self.heuristic_scores.append(float(heuristic_score))
         self.per_track_probs.setdefault(int(track_id), []).append(float(raw_prob))
+        self.per_track_heuristics.setdefault(int(track_id), []).append(float(heuristic_score))
         self.total_inferences += 1
 
     def record_alert(self, frame_idx: int, track_id: int, prob: float, reason: str = ""):
@@ -419,10 +586,16 @@ class VideoSummaryBuilder:
             }
 
         probs = np.asarray(self.raw_probs) if self.raw_probs else np.zeros(0)
+        heur = np.asarray(self.heuristic_scores) if self.heuristic_scores else np.zeros(0)
         topk_vals = sorted(self.raw_probs, reverse=True)[:topk]
+        topk_heur = sorted(self.heuristic_scores, reverse=True)[:topk]
         per_track_max = {
             int(tid): round(max(plist), 4)
             for tid, plist in self.per_track_probs.items()
+        }
+        per_track_heur_max = {
+            int(tid): round(max(plist), 4)
+            for tid, plist in self.per_track_heuristics.items()
         }
 
         return {
@@ -436,11 +609,17 @@ class VideoSummaryBuilder:
             "max_pfall": round(float(probs.max()), 4) if probs.size else 0.0,
             "mean_pfall": round(float(probs.mean()), 4) if probs.size else 0.0,
             "median_pfall": round(float(np.median(probs)), 4) if probs.size else 0.0,
+            "max_pose_heuristic": round(float(heur.max()), 4) if heur.size else 0.0,
+            f"top{topk}_pose_heuristic": [round(v, 4) for v in topk_heur],
+            f"mean_top{topk}_pose_heuristic": (
+                round(float(np.mean(topk_heur)), 4) if topk_heur else 0.0
+            ),
             f"top{topk}_pfall": [round(v, 4) for v in topk_vals],
             f"mean_top{topk}_pfall": (
                 round(float(np.mean(topk_vals)), 4) if topk_vals else 0.0
             ),
             "per_track_max_pfall": per_track_max,
+            "per_track_max_pose_heuristic": per_track_heur_max,
             "alerts": self.alerts,
             "num_alerts": len(self.alerts),
             "diagnosis": self.diagnose(mid_thr=mid_thr, max_low_zone=max_low_zone),

@@ -77,7 +77,7 @@ from inference.pose_to_pyskl_format import build_sample
 from inference.batch_predict import load_action_model, predict_clip as _predict_clip_fallback
 from inference.realtime_core import (
     TimeAwareBuffer, TrackMerger, AlertPolicy, bbox_iou, bbox_center_dist_norm,
-    ProbabilityLogger, VideoSummaryBuilder,
+    PoseHeuristicScorer, ProbabilityLogger, VideoSummaryBuilder,
 )
 
 
@@ -168,6 +168,8 @@ class TrackState:
 
     last_prob: float = 0.0           # raw
     smoothed_prob: float = 0.0       # EMA
+    heuristic_score: float = 0.0
+    heuristic_reason: str = ""
     over_thr_streak: int = 0
     alerted: bool = False
     alert_frames_left: int = 0
@@ -218,6 +220,8 @@ class TrackState:
         self.buffer.inherit_from(other.buffer)
         self.last_prob = float(other.last_prob)
         self.smoothed_prob = float(other.smoothed_prob)
+        self.heuristic_score = float(other.heuristic_score)
+        self.heuristic_reason = str(other.heuristic_reason or "")
         self.over_thr_streak = int(other.over_thr_streak)
         self.recent_raw_probs.extend(list(other.recent_raw_probs))
         self.alerted = bool(other.alerted)
@@ -258,6 +262,8 @@ class MultiTrackFallDetector:
         alert_policy: Optional[AlertPolicy] = None,
         prob_logger: Optional[ProbabilityLogger] = None,
         summary: Optional[VideoSummaryBuilder] = None,
+        pose_heuristic: Optional[PoseHeuristicScorer] = None,
+        pose_heuristic_thr: float = 1.01,
         # 兼容字段
         event_logger=None,
     ):
@@ -278,6 +284,8 @@ class MultiTrackFallDetector:
         self.alert_policy = alert_policy
         self.prob_logger = prob_logger
         self.summary = summary
+        self.pose_heuristic = pose_heuristic
+        self.pose_heuristic_thr = float(pose_heuristic_thr)
         self.event_logger = event_logger
 
         self.tracks: Dict[int, TrackState] = {}
@@ -418,6 +426,13 @@ class MultiTrackFallDetector:
             st.infer_count += 1
             st.last_prob = raw_prob
             st.recent_raw_probs.append(raw_prob)
+            if self.pose_heuristic is not None:
+                heur = self.pose_heuristic.score(st.buffer.kpts, st.buffer.scores)
+                st.heuristic_score = heur.score
+                st.heuristic_reason = ",".join(heur.reasons)
+            else:
+                st.heuristic_score = 0.0
+                st.heuristic_reason = ""
 
             # EMA 平滑
             if st.infer_count == 1:
@@ -436,9 +451,11 @@ class MultiTrackFallDetector:
                     buffer_len=st.buffer.buffer_len, bbox=st.bbox,
                     alerted=decision["alert_onset"],
                     alert_reason=decision["reason"],
+                    heuristic_score=st.heuristic_score,
+                    heuristic_reason=st.heuristic_reason,
                 )
             if self.summary is not None:
-                self.summary.record_inference(st.display_id, raw_prob)
+                self.summary.record_inference(st.display_id, raw_prob, st.heuristic_score)
                 if decision["alert_onset"]:
                     self.summary.record_alert(
                         frame_idx=frame_idx, track_id=st.display_id,
@@ -524,6 +541,17 @@ class MultiTrackFallDetector:
             should_alert = st.over_thr_streak >= self.alert_k and st.smoothed_prob >= self.threshold
             reason = "consec_mid" if should_alert else ""
             trig_prob = st.smoothed_prob
+
+        if (
+            not should_alert
+            and self.pose_heuristic is not None
+            and st.heuristic_score >= self.pose_heuristic_thr
+        ):
+            should_alert = True
+            reason = "pose_heuristic"
+            if st.heuristic_reason:
+                reason = f"{reason}:{st.heuristic_reason}"
+            trig_prob = st.heuristic_score
 
         # 状态机:首次触发 → onset;持续超阈值 → 维持 alert_frames_left
         alert_onset = False
@@ -623,6 +651,8 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             status = "FALL" if is_fall else "NORMAL"
             label = f"id:{st.display_id} {status} P(fall):{st.smoothed_prob:.2f}"
+            if getattr(st, "heuristic_score", 0.0) >= 0.3:
+                label += f" H:{st.heuristic_score:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
                 tag = "FALL"
@@ -795,6 +825,13 @@ def run_multitarget_realtime(args):
             ground_truth=args.ground_truth if args.ground_truth in (0, 1) else None,
         )
 
+    pose_heuristic = None
+    if args.pose_heuristic_alert:
+        pose_heuristic = PoseHeuristicScorer(
+            kpt_thr=args.kpt_thr,
+            min_frames=args.pose_heuristic_min_frames,
+        )
+
     # 5. 检测器
     detector = MultiTrackFallDetector(
         predictor=predictor,
@@ -813,6 +850,8 @@ def run_multitarget_realtime(args):
         alert_policy=alert_policy,
         prob_logger=prob_logger,
         summary=summary,
+        pose_heuristic=pose_heuristic,
+        pose_heuristic_thr=args.pose_heuristic_thr,
         event_logger=event_logger,
     )
 
@@ -966,6 +1005,12 @@ def build_argparser():
                    help="最近 N 次推理中 top-k 平均 ≥ 此值报警(默认 1.01 = 关闭)")
     p.add_argument("--alert-hold", type=float, default=1.5)
     p.add_argument("--ema", type=float, default=0.5)
+    p.add_argument("--pose-heuristic-alert", action="store_true",
+                   help="启用骨架几何兜底报警,用于模型低分但姿态明显跌倒的快摔片段")
+    p.add_argument("--pose-heuristic-thr", type=float, default=0.62,
+                   help="骨架启发式分数达到该值时报警,仅在 --pose-heuristic-alert 时生效")
+    p.add_argument("--pose-heuristic-min-frames", type=int, default=12,
+                   help="启发式评分至少需要的历史骨架帧数")
 
     # YOLO
     p.add_argument("--conf", type=float, default=0.25)

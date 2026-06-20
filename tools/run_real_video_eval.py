@@ -138,6 +138,10 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
         cmd += ["--topk-mean-thr", str(args.topk_mean_thr),
                 "--topk-window", str(args.topk_window),
                 "--topk-k", str(args.topk_k)]
+    if args.pose_heuristic_alert:
+        cmd += ["--pose-heuristic-alert",
+                "--pose-heuristic-thr", str(args.pose_heuristic_thr),
+                "--pose-heuristic-min-frames", str(args.pose_heuristic_min_frames)]
     if label is not None:
         cmd += ["--ground-truth", str(int(label))]
 
@@ -194,6 +198,7 @@ def write_summary_csv(per_video: List[dict], out_csv: Path):
         "video_name", "gt_label", "ok",
         "diagnosis", "num_alerts",
         "max_pfall", "mean_top5_pfall", "mean_pfall",
+        "max_pose_heuristic", "mean_top5_pose_heuristic",
         "num_unique_tracks", "num_id_switches_handled", "suspected_id_switch",
         "total_inferences", "total_frames",
         "overlay", "prob_log",
@@ -209,7 +214,8 @@ def write_summary_csv(per_video: List[dict], out_csv: Path):
         s = r["summary"]
         if s:
             for k in ["diagnosis", "num_alerts", "max_pfall", "mean_top5_pfall",
-                      "mean_pfall", "num_unique_tracks", "num_id_switches_handled",
+                      "mean_pfall", "max_pose_heuristic", "mean_top5_pose_heuristic",
+                      "num_unique_tracks", "num_id_switches_handled",
                       "suspected_id_switch", "total_inferences", "total_frames"]:
                 if k in s:
                     row[k] = s[k]
@@ -330,6 +336,10 @@ def main():
     p.add_argument("--topk-mean-thr", type=float, default=1.01)
     p.add_argument("--topk-window", type=int, default=5)
     p.add_argument("--topk-k", type=int, default=3)
+    p.add_argument("--pose-heuristic-alert", action="store_true",
+                   help="启用骨架几何兜底报警,用于快摔/翻倒但模型低分的真实视频")
+    p.add_argument("--pose-heuristic-thr", type=float, default=0.62)
+    p.add_argument("--pose-heuristic-min-frames", type=int, default=12)
 
     args = p.parse_args()
 
