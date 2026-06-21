@@ -93,7 +93,7 @@ deploy/protocol.py
 * 今天不要直接更换 YOLO pose/track 模型；后续若评估更强检测/跟踪模型，必须先验证 COCO 17 点顺序、坐标格式、置信度分布和当前训练输入一致，避免破坏 PoseConv3D 的输入分布。
 * 长任务和训练必须用 `screen`。
 * 没有 labels CSV 时 `metrics.json={}` 是正常的；不能据此说 P/R/F1 不可算，只是缺少显式标签输入。
-* 若继续优化漏检，先跑推理策略 ablation，不要直接重训；重训只在用户明确要求并准备困难样本后进行。
+* 当前最严重的问题是 YOLO pose/track 在顽固视频里容易跟丢，导致 PoseConv3D 拿不到连续骨架；逻辑检测现阶段不作为主要增强方向。若后续重训，只在用户明确要求并准备困难样本后进行。
 
 ## 历史详细记录
 
@@ -1797,14 +1797,5 @@ elder_fall_7.mp4: fall_trend rescued at frame 131, max_pfall=0.361
 * `fall_trend` / `autopsy` 是工程趋势兜底，不是纯 PoseConv3D 模型输出。
 * overlay 颜色语义已修正：红色表示模型触发或模型同时触发；橙色表示 `fall_trend` / `autopsy` 趋势兜底；紫色表示纯 `pose_heuristic` / `track_lost_after_fall_pose` 逻辑兜底；绿色表示正常。
 * 若模型判断和趋势/逻辑同时发生，框仍为红色，但标签会写出 `MODEL+TREND FALL` 或 `MODEL+LOGIC FALL`。
-* 今天不直接更换 YOLO pose/track 模型。后续可以让 Claude 重点研究更强跟踪方案，但必须保证输出骨架格式、COCO 17 点顺序、坐标尺度和置信度分布与当前 PoseConv3D 训练输入兼容。
-
-给 Claude 的问题清单：
-
-```text
-1. 当前主要问题是跟踪模型容易跟丢：两个顽固视频中，YOLO pose/track 会在老人转身、遮挡、快速摔倒或倒地后短时间丢人，导致 PoseConv3D 拿不到连续骨架。请优先研究不破坏训练输入分布的跟踪连续性方案。
-2. 现有能力要保留：track_merge、track_merge_same_frame、lost_track_alert、stale overlay suppression；不要恢复全量 snapshot 导致拼接视频旧骨架长期残留。
-3. 可探索方向：短时丢失后的同人 re-association、基于 bbox/pose/时间的轨迹接力、倒地后低置信度人体保留、局部 ROI 重检、丢失前后 clip 补齐/插值、针对快速摔倒的更短窗口或多窗口投票。
-4. 如建议升级 YOLO pose/track 模型，必须说明怎样验证 COCO 17 点顺序、关键点坐标、score 分布和当前 `build_sample` / PoseConv3D 输入一致；今天不要直接替换默认模型。
-5. 必须区分模型能力和工程兜底：只有模型检测/模型报警参与时才能给红框；`fall_trend/autopsy` 单独触发必须是橙框；传统逻辑兜底单独触发必须是紫框。
-```
+* 后续如研究更强 YOLO pose/track 或跟踪接力方案，必须保证输出骨架格式、COCO 17 点顺序、坐标尺度和置信度分布与当前 PoseConv3D 训练输入兼容。
+* 当前最严重问题是跟踪模型容易跟丢，逻辑检测现阶段没必要继续加强。
