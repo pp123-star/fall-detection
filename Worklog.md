@@ -36,7 +36,8 @@ inference/realtime_core.py
 
 ```text
 green  = normal
-red    = model fall, including model+logic
+red    = model fall, including model+logic/model+trend
+orange = fall_trend/autopsy engineering fallback
 purple = logic-only fallback
 ```
 
@@ -45,18 +46,19 @@ purple = logic-only fallback
 上一轮服务器输出：
 
 ```text
-/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_sameframe_merge_20260621_014000
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_falltrend_20260622_002414
 ```
 
 结果：
 
 ```text
 12 videos processed
-detected: 11/12
-elder_fall_7.mp4: partial_signal, max_pfall=0.361
+failure_cases.csv is empty
+metrics.json = {} because no labels CSV was supplied
+elder_fall_7.mp4 was rescued by fall_trend at frame 131, max_pfall=0.361
 ```
 
-`elder_fall_7` 的主要问题不是单纯骨架识别失败，而是摔倒过程短、ID/pose 连续性弱、模型 raw/heuristic 信号临界。新增 `FallTrendDetector` 正是针对这个问题，合并后需要在服务器重新跑 `elder_fall` 验证。
+`elder_fall_7` 的主要问题不是单纯骨架识别失败，而是摔倒过程短、ID/pose 连续性弱、模型 raw/heuristic 信号临界。`FallTrendDetector` 可以救这类临界漏检，但它是工程兜底，不是纯 PoseConv3D 模型识别能力。
 
 ## 分布式摄像头方案
 
@@ -86,8 +88,9 @@ deploy/protocol.py
 
 ## 后续工作原则
 
-* 不要把逻辑兜底说成模型能力提升；输出中必须保留红框/紫框语义。
+* 不要把逻辑/趋势兜底说成模型能力提升；输出中必须保留红框/橙框/紫框语义。
 * 不要为了旧框连续性恢复 `detector.snapshot()` 全量绘制，否则拼接视频会出现旧骨架长期残留。
+* 今天不要直接更换 YOLO pose/track 模型；后续若评估更强检测/跟踪模型，必须先验证 COCO 17 点顺序、坐标格式、置信度分布和当前训练输入一致，避免破坏 PoseConv3D 的输入分布。
 * 长任务和训练必须用 `screen`。
 * 没有 labels CSV 时 `metrics.json={}` 是正常的；不能据此说 P/R/F1 不可算，只是缺少显式标签输入。
 * 若继续优化漏检，先跑推理策略 ablation，不要直接重训；重训只在用户明确要求并准备困难样本后进行。
@@ -1771,3 +1774,37 @@ test9.mp4: detected, num_alerts=8, max_pfall=1.0, num_id_switches_handled=44
 * 同帧接力主要针对“同一个人同一帧被拆成两个 ID”的情况，可以减少动作 clip 被切碎。
 * 对 `elder_fall_7` 仍未完全解决，说明该视频更接近模型/骨架信号都偏弱的困难样本；后续若要继续提高，需要单独调低逻辑阈值做部署兜底，或把它作为困难正样本进入微调数据。
 * 本次没有训练，也没有删除任何 checkpoint、训练目录或旧输出。
+
+### 10.24 FallTrendDetector 评估与颜色语义修正
+
+服务器已在 `--fall-trend` 策略下重跑 `data/real_test/elder_fall`，输出目录：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_falltrend_20260622_002414
+```
+
+结果摘要：
+
+```text
+12 videos processed
+failure_cases.csv is empty
+metrics.json = {} because no labels CSV was supplied
+elder_fall_7.mp4: fall_trend rescued at frame 131, max_pfall=0.361
+```
+
+重要解释：
+
+* `fall_trend` / `autopsy` 是工程趋势兜底，不是纯 PoseConv3D 模型输出。
+* overlay 颜色语义已修正：红色表示模型触发或模型同时触发；橙色表示 `fall_trend` / `autopsy` 趋势兜底；紫色表示纯 `pose_heuristic` / `track_lost_after_fall_pose` 逻辑兜底；绿色表示正常。
+* 若模型判断和趋势/逻辑同时发生，框仍为红色，但标签会写出 `MODEL+TREND FALL` 或 `MODEL+LOGIC FALL`。
+* 今天不直接更换 YOLO pose/track 模型。后续可以让 Claude 重点研究更强跟踪方案，但必须保证输出骨架格式、COCO 17 点顺序、坐标尺度和置信度分布与当前 PoseConv3D 训练输入兼容。
+
+给 Claude 的问题清单：
+
+```text
+1. 当前主要问题是跟踪模型容易跟丢：两个顽固视频中，YOLO pose/track 会在老人转身、遮挡、快速摔倒或倒地后短时间丢人，导致 PoseConv3D 拿不到连续骨架。请优先研究不破坏训练输入分布的跟踪连续性方案。
+2. 现有能力要保留：track_merge、track_merge_same_frame、lost_track_alert、stale overlay suppression；不要恢复全量 snapshot 导致拼接视频旧骨架长期残留。
+3. 可探索方向：短时丢失后的同人 re-association、基于 bbox/pose/时间的轨迹接力、倒地后低置信度人体保留、局部 ROI 重检、丢失前后 clip 补齐/插值、针对快速摔倒的更短窗口或多窗口投票。
+4. 如建议升级 YOLO pose/track 模型，必须说明怎样验证 COCO 17 点顺序、关键点坐标、score 分布和当前 `build_sample` / PoseConv3D 输入一致；今天不要直接替换默认模型。
+5. 必须区分模型能力和工程兜底：只有模型检测/模型报警参与时才能给红框；`fall_trend/autopsy` 单独触发必须是橙框；传统逻辑兜底单独触发必须是紫框。
+```

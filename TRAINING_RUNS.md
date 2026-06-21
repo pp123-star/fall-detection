@@ -802,3 +802,41 @@ test9.mp4: num_id_switches_handled=44
 Interpretation:
 
 This is still a deployment evaluation using model probability plus explicitly labeled engineering fallbacks. It is not a new training run and does not change the retained checkpoint policy.
+
+### FallTrendDetector Deployment Evaluation
+
+Date: 2026-06-22.
+
+This was not a training run. No checkpoints were created, replaced, or deleted.
+
+Code/evaluation focus:
+
+* Enable `--fall-trend` to add trend/geometric/disappearance/autopsy deployment fallback.
+* Keep PoseConv3D checkpoint unchanged: `work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth`.
+* Keep YOLO pose/track model unchanged for now to avoid changing the skeleton input distribution without validation.
+
+Server output:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_falltrend_20260622_002414
+```
+
+Input:
+
+```text
+data/real_test/elder_fall
+12 videos
+```
+
+Result summary:
+
+```text
+12 overlays generated
+failure_cases.csv is empty
+metrics.json = {} because no labels CSV was supplied
+elder_fall_7.mp4: rescued by fall_trend at frame 131, max_pfall=0.361
+```
+
+Interpretation:
+
+The improved `elder_fall_7` result is an engineering fallback result, not proof that the PoseConv3D checkpoint itself learned the case. Overlay colors were later clarified so `fall_trend` / `autopsy` fallback draws orange, model-involved fall draws red, and pure logic fallback draws purple.

@@ -93,6 +93,7 @@ COCO_SKELETON = [
 ]
 COLOR_NORMAL = (60, 200, 60)
 COLOR_FALL = (60, 60, 240)
+COLOR_TREND_FALL = (0, 165, 255)
 COLOR_LOGIC_FALL = (220, 60, 220)
 COLOR_NOID = (160, 160, 160)
 
@@ -977,13 +978,17 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
     H, W = frame.shape[:2]
 
     for st in tracks:
+        trend_alert = _is_trend_alert(st)
         logic_alert = _is_logic_alert(st)
         model_score_fall = st.smoothed_prob >= threshold
-        model_alert = (st.alerted and not logic_alert) or model_score_fall
+        model_alert = (st.alerted and not logic_alert and not trend_alert) or model_score_fall
         model_and_logic = model_alert and logic_alert
+        model_and_trend = model_alert and trend_alert
         is_fall = st.alerted or model_score_fall
         if model_alert:
             color = COLOR_FALL
+        elif trend_alert:
+            color = COLOR_TREND_FALL
         elif logic_alert:
             color = COLOR_LOGIC_FALL
         else:
@@ -992,8 +997,14 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
         if st.bbox is not None and np.any(st.bbox):
             x1, y1, x2, y2 = st.bbox.astype(int)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            if model_and_logic:
+            if model_and_logic and model_and_trend:
+                status = "MODEL+TREND+LOGIC FALL"
+            elif model_and_trend:
+                status = "MODEL+TREND FALL"
+            elif model_and_logic:
                 status = "MODEL+LOGIC FALL"
+            elif trend_alert:
+                status = "TREND FALL"
             elif logic_alert:
                 status = "LOGIC FALL"
             elif is_fall:
@@ -1005,22 +1016,35 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
                 label += f" H:{st.heuristic_score:.2f}"
             _draw_label(frame, label, (x1, y1), color)
             if st.alerted:
-                if model_and_logic:
-                    tag = f"MODEL+LOGIC FALL P:{st.smoothed_prob:.2f} H:{st.heuristic_score:.2f}"
+                if model_and_logic or model_and_trend:
+                    parts = ["MODEL"]
+                    if trend_alert:
+                        parts.append("TREND")
+                    if logic_alert:
+                        parts.append("LOGIC")
+                    tag = f"{'+'.join(parts)} FALL P:{st.smoothed_prob:.2f} H:{st.heuristic_score:.2f}"
                     _draw_label(frame, tag, (x1, y2 + 24), COLOR_FALL, scale=0.72)
-                    reason = _short_logic_reason(st.last_alert_reason)
+                    reason = _short_alert_reason(st.last_alert_reason)
                     if reason:
                         _draw_label(frame, reason, (x1, y2 + 48), COLOR_FALL, scale=0.52)
+                elif trend_alert:
+                    tag = f"TREND FALL P:{st.smoothed_prob:.2f} H:{st.heuristic_score:.2f}"
+                    reason = _short_alert_reason(st.last_alert_reason)
+                    _draw_label(frame, tag, (x1, y2 + 24), COLOR_TREND_FALL, scale=0.78)
+                    if reason:
+                        _draw_label(frame, reason, (x1, y2 + 48), COLOR_TREND_FALL, scale=0.52)
                 elif logic_alert:
                     tag = f"LOGIC FALL H:{st.heuristic_score:.2f}"
-                    reason = _short_logic_reason(st.last_alert_reason)
+                    reason = _short_alert_reason(st.last_alert_reason)
                     _draw_label(frame, tag, (x1, y2 + 24), COLOR_LOGIC_FALL, scale=0.78)
                     if reason:
                         _draw_label(frame, reason, (x1, y2 + 48), COLOR_LOGIC_FALL, scale=0.52)
                 else:
                     tag = f"MODEL FALL P:{st.smoothed_prob:.2f}"
                     if st.last_alert_reason:
-                        tag = f"{tag} {st.last_alert_reason}"
+                        reason = _short_alert_reason(st.last_alert_reason)
+                        if reason:
+                            tag = f"{tag} {reason}"
                     _draw_label(frame, tag, (x1, y2 + 22), COLOR_FALL, scale=0.68)
 
     if noid_dets:
@@ -1038,15 +1062,35 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
     cv2.putText(frame, hud, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255), 1, cv2.LINE_AA)
     if any(st.alerted for st in tracks):
-        light = COLOR_FALL if any(
-            (st.alerted and not _is_logic_alert(st)) or st.smoothed_prob >= threshold
+        has_model = any(
+            (st.alerted and not _is_logic_alert(st) and not _is_trend_alert(st))
+            or st.smoothed_prob >= threshold
             for st in tracks
-        ) else COLOR_LOGIC_FALL
+        )
+        has_trend = any(_is_trend_alert(st) for st in tracks)
+        light = COLOR_FALL if has_model else (COLOR_TREND_FALL if has_trend else COLOR_LOGIC_FALL)
         cv2.circle(frame, (W - 20, 18), 8, light, -1)
+
+
+def _is_trend_alert(st: TrackState) -> bool:
+    reason = str(st.last_alert_reason or "")
+    return bool(
+        st.alerted
+        and (
+            reason.startswith("fall_trend")
+            or reason.startswith("autopsy")
+            or (
+                reason.startswith("track_lost_after_fall_pose")
+                and ("disappear_" in reason)
+            )
+        )
+    )
 
 
 def _is_logic_alert(st: TrackState) -> bool:
     reason = str(st.last_alert_reason or "")
+    if _is_trend_alert(st):
+        return False
     return bool(
         st.alerted
         and (
@@ -1056,11 +1100,17 @@ def _is_logic_alert(st: TrackState) -> bool:
     )
 
 
-def _short_logic_reason(reason: str) -> str:
+def _short_alert_reason(reason: str) -> str:
     if not reason:
         return ""
-    reason = str(reason).replace("pose_heuristic:", "")
-    reason = reason.replace("track_lost_after_fall_pose:", "")
+    reason = str(reason)
+    for prefix in (
+        "pose_heuristic:",
+        "track_lost_after_fall_pose:",
+        "fall_trend:",
+        "autopsy:",
+    ):
+        reason = reason.replace(prefix, "")
     keys = []
     for part in reason.split(","):
         name = part.split("=", 1)[0].strip()
