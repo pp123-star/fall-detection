@@ -1,0 +1,6 @@
+# 服务端依赖 (在 autodl 服务器上安装)
+# 假设已经有 fall-detection 主项目环境 (PyTorch + MMAction2 + 现有依赖)
+# 这里只列分布式部署额外需要的:
+
+websockets>=12.0
+# 注意:websockets v13+ 的 serve handler 签名变了,本代码兼容 v11/v12/v13

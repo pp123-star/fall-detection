@@ -1,0 +1,16 @@
+# 客户端依赖 (在你本地笔记本/PC 上安装)
+# 客户端 NOT 需要 MMAction2 / torch 完整训练栈,只需要轻量推理 + 摄像头
+
+# 摄像头 + 渲染
+opencv-python>=4.8.0
+
+# 数值计算
+numpy>=1.21,<2.0
+
+# 本地 YOLO Pose (轻量,CPU 也能跑)
+ultralytics>=8.3.0
+# ultralytics 会自动拉 PyTorch CPU 版,无需手动装
+# 如有 GPU,可参考 https://pytorch.org/get-started/locally/ 装 CUDA 版
+
+# WebSocket 通信
+websockets>=12.0

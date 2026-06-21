@@ -152,6 +152,31 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
                 "--lost-track-min-gap", str(args.lost_track_min_gap),
                 "--lost-track-heuristic-thr", str(args.lost_track_heuristic_thr),
                 "--lost-track-model-thr", str(args.lost_track_model_thr)]
+    if args.fall_trend:
+        cmd += ["--fall-trend",
+                "--fall-trend-slope-window", str(args.fall_trend_slope_window),
+                "--fall-trend-slope-prob-thr", str(args.fall_trend_slope_prob_thr),
+                "--fall-trend-slope-heur-thr", str(args.fall_trend_slope_heur_thr),
+                "--fall-trend-slope-min-current", str(args.fall_trend_slope_min_current),
+                "--fall-trend-geom-window", str(args.fall_trend_geom_window),
+                "--fall-trend-bbox-h-drop", str(args.fall_trend_bbox_h_drop),
+                "--fall-trend-aspect-rise", str(args.fall_trend_aspect_rise),
+                "--fall-trend-geom-age-min", str(args.fall_trend_geom_age_min),
+                "--fall-trend-disappear-lookback", str(args.fall_trend_disappear_lookback),
+                "--fall-trend-disappear-raw-min", str(args.fall_trend_disappear_raw_min),
+                "--fall-trend-disappear-heur-min", str(args.fall_trend_disappear_heur_min),
+                "--fall-trend-disappear-tolerance", str(args.fall_trend_disappear_tolerance),
+                "--fall-trend-autopsy-raw-thr", str(args.fall_trend_autopsy_raw_thr),
+                "--fall-trend-autopsy-heur-thr", str(args.fall_trend_autopsy_heur_thr),
+                "--fall-trend-autopsy-late-peak", str(args.fall_trend_autopsy_late_peak)]
+        if args.fall_trend_disable_slope:
+            cmd += ["--fall-trend-disable-slope"]
+        if args.fall_trend_disable_geom:
+            cmd += ["--fall-trend-disable-geom"]
+        if args.fall_trend_disable_disappear:
+            cmd += ["--fall-trend-disable-disappear"]
+        if args.fall_trend_disable_autopsy:
+            cmd += ["--fall-trend-disable-autopsy"]
     if label is not None:
         cmd += ["--ground-truth", str(int(label))]
 
@@ -359,6 +384,29 @@ def main():
     p.add_argument("--lost-track-min-gap", type=int, default=8)
     p.add_argument("--lost-track-heuristic-thr", type=float, default=0.45)
     p.add_argument("--lost-track-model-thr", type=float, default=0.35)
+
+    # FallTrendDetector 透传 (策略 A/B/C/D 复合摔倒检测)
+    p.add_argument("--fall-trend", action="store_true",
+                   help="启用 FallTrendDetector 复合检测 (slope/geom/disappear/autopsy)")
+    p.add_argument("--fall-trend-slope-window", type=int, default=5)
+    p.add_argument("--fall-trend-slope-prob-thr", type=float, default=0.05)
+    p.add_argument("--fall-trend-slope-heur-thr", type=float, default=0.08)
+    p.add_argument("--fall-trend-slope-min-current", type=float, default=0.28)
+    p.add_argument("--fall-trend-geom-window", type=int, default=15)
+    p.add_argument("--fall-trend-bbox-h-drop", type=float, default=0.35)
+    p.add_argument("--fall-trend-aspect-rise", type=float, default=0.10)
+    p.add_argument("--fall-trend-geom-age-min", type=int, default=3)
+    p.add_argument("--fall-trend-disappear-lookback", type=int, default=4)
+    p.add_argument("--fall-trend-disappear-raw-min", type=float, default=0.28)
+    p.add_argument("--fall-trend-disappear-heur-min", type=float, default=0.32)
+    p.add_argument("--fall-trend-disappear-tolerance", type=float, default=0.03)
+    p.add_argument("--fall-trend-autopsy-raw-thr", type=float, default=0.30)
+    p.add_argument("--fall-trend-autopsy-heur-thr", type=float, default=0.35)
+    p.add_argument("--fall-trend-autopsy-late-peak", type=float, default=0.5)
+    p.add_argument("--fall-trend-disable-slope", action="store_true")
+    p.add_argument("--fall-trend-disable-geom", action="store_true")
+    p.add_argument("--fall-trend-disable-disappear", action="store_true")
+    p.add_argument("--fall-trend-disable-autopsy", action="store_true")
 
     args = p.parse_args()
 

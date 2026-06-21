@@ -1,69 +1,98 @@
-# 📋 项目交接文档 (AI Handover Document)
+# 项目交接摘要 (AI Handover)
 
-**Target Agent:** 此文档用于 AI 助手接管当前的“基于深度学习的视频动作识别（摔倒检测）”项目。请仔细阅读当前状态，并严格按照 `Next Steps` 推进。
+本文档顶部是当前状态摘要；后面保留历史记录，只在需要追溯细节时阅读。
 
-## 1. 项目基础配置 (Project Context)
+## 当前项目状态
 
-* **任务目标:** 视频动作二分类（摔倒 vs 非摔倒/困难负样本）。
-* **硬件环境:** AutoDL 平台, RTX 4090 (24GB) * 1, 纯 GPU 模式已开启。
-* **软件环境:** Ubuntu 22.04, Python 3.10, 虚拟环境名称为 `falldet`。
-* **工作目录:** `~/autodl-tmp/fall-detection`
+* 项目路径：`D:\AAA\基于深度学习的视频动作识别技术研究\fall-detection`
+* 服务器路径：`/root/autodl-tmp/fall-detection`
+* 服务器环境：AutoDL / RTX 4090 / conda env `falldet`
+* 主模型：PoseConv3D 二分类摔倒检测
+* 推荐 checkpoint：`work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth`
+* 训练状态：PoseConv3D 已完成 24 epoch；不要在未明确要求时重新训练。
+* 重要保护：不要删除 `work_dirs/`、checkpoint、训练产物、服务器数据和用户未跟踪文件。
 
-## 2. 环境状态 (Environment Status) - [已完全就绪]
+## 当前推理策略
 
-* 已在一个干净的 conda 环境 (`falldet`) 中通过 `bash env/setup_autodl.sh` 完成所有依赖安装。
-* **已解决的历史冲突:** * 彻底修复了无卡模式导致的 CUDA 丢失问题。
-* 强制锁定了 `numpy<2.0` 解决底层 API 冲突。
-* 使用 `--no-build-isolation` 强装了 `chumpy` 解决了 pip 隔离机制导致的编译崩溃。
+主入口：
 
-
-* **验证结果:** `python env/verify.py` 报告所有包（PyTorch 2.1.0+cu118, MMCV 2.1.0, MMAction2 1.2.0, Ultralytics 等）加载正常，GPU 识别成功。
-
-## 3. 数据状态 (Data Status) - [已完全就绪]
-
-* **数据下载:** 已成功下载 OpenMMLab 官方预提取的 NTU60 2D 骨骼数据集 (`data/ntu60_2d.pkl`)。
-* **二分类构建:** 已执行 `build_binary_pkl.py`。成功将 60 类转化为 0/1 二分类，并重点混入了 "sit down", "staggering" 等困难负样本。输出文件为 `data/fall_binary_xsub.pkl`。
-* **防泄漏自检:** 已执行 `split_check.py`。确认 X-Sub 划分（按受试者）绝对安全，训练集（20人）与验证集（20人）完全隔离，0 重叠。
-* **骨骼可视化核验:** 已生成 COCO 17 点骨骼连线视频，**人工已肉眼确认关键点顺序 100% 正确**（头连头、脚连脚，无乱线）。
-
-## 4. 下一步行动指令 (Actionable Next Steps)
-
-环境与数据均已完美 Ready，尚未开始任何模型训练。请接管系统并**直接从模型训练开始**，严格按以下顺序在 `falldet` 环境下执行命令：
-
-**Step 1: 启动主线模型训练 (Train PoseConv3D)**
-请使用单卡启动训练流程（预计耗时 1.5 - 2 小时）：
-
-```bash
-conda activate falldet
-cd ~/autodl-tmp/fall-detection
-bash tools/train.sh configs/posec3d_fall_binary.py 1
-
+```text
+inference/multitarget_realtime_demo.py
+tools/run_real_video_eval.py
+inference/realtime_core.py
 ```
 
-**Step 2: Checkpoint 完整性自检 (Verify Weights)**
-训练结束后，必须运行此脚本以验证最佳权重文件是否正确保存，防止发生保存逻辑 Bug：
+当前真实视频推理已包含：
 
-```bash
-python tools/verify_best_ckpt.py work_dirs/posec3d_fall_binary
+* `TimeAwareBuffer`：真实视频用 `--time-window-sec 1.6` 覆盖更完整动作。
+* `AlertPolicy`：`--high-thr`、`--topk-mean-thr`、连续中阈值三类报警。
+* `PoseHeuristicScorer`：紫框逻辑兜底，明确区分模型判断和工程逻辑。
+* `lost_track_alert`：跌倒姿态后 pose/track 消失时报警。
+* `track_merge` + `track_merge_same_frame`：处理 ID 切换和同帧拆分，尽量保持动作 clip 连续。
+* stale overlay suppression：内部保留长 track 用于接力，但 overlay 只短暂绘制旧 track，避免旧框污染后续画面。
+* `FallTrendDetector`：新增趋势/几何/消失/清理前复合检测，用于救 `elder_fall_7` 这类临界漏检。
 
+颜色语义：
+
+```text
+green  = normal
+red    = model fall, including model+logic
+purple = logic-only fallback
 ```
 
-**Step 3: 测试与二分类指标评估 (Evaluation)**
-使用跑出的最佳 checkpoint 进行测试，并输出精准的二分类指标（F1, Recall, 混淆矩阵）：
+## 最近有效评估
 
-```bash
-# 请将 <BEST_CKPT_PATH> 替换为 Step 2 中确认的最佳权重路径
-bash tools/test.sh configs/posec3d_fall_binary.py <BEST_CKPT_PATH> work_dirs/posec3d_fall_binary/pred.pkl
+上一轮服务器输出：
 
-python tools/eval_binary_metrics.py \
-    --pred work_dirs/posec3d_fall_binary/pred.pkl \
-    --config configs/posec3d_fall_binary.py \
-    --out-dir work_dirs/posec3d_fall_binary/eval \
-    --save-errors
-
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_sameframe_merge_20260621_014000
 ```
 
-*(如果以上一切顺利，可以继续按照项目文档执行 `configs/stgcnpp_fall_binary.py` 对比模型的训练，或绘制训练曲线。)*
+结果：
+
+```text
+12 videos processed
+detected: 11/12
+elder_fall_7.mp4: partial_signal, max_pfall=0.361
+```
+
+`elder_fall_7` 的主要问题不是单纯骨架识别失败，而是摔倒过程短、ID/pose 连续性弱、模型 raw/heuristic 信号临界。新增 `FallTrendDetector` 正是针对这个问题，合并后需要在服务器重新跑 `elder_fall` 验证。
+
+## 分布式摄像头方案
+
+新增 `deploy/`：本地电脑采集摄像头并跑轻量 YOLO Pose，只上传骨架 JSON 到服务器；服务器跑 PoseConv3D 和报警策略，只返回结果 JSON；本地合成 overlay。暂时只作为代码和文档同步，不需要现在部署。
+
+## 2026-06-21 add/ 补充代码合并
+
+从 `D:\AAA\基于深度学习的视频动作识别技术研究\add` 合并两组补充内容：
+
+* `files-2` 检测策略：合入 `FallTrendDetector`、`recent_heuristics`、`recent_bboxes`、lost-track raw 概率修复、`--fall-trend` CLI 透传和 `tools/replay_fall_trend.py`。目标是救 `elder_fall_7` 这类 raw/heuristic 上升但绝对阈值临界的漏检。
+* `files-1` 分布式部署：新增 `deploy/` WebSocket 服务端/客户端和 `docs/10_分布式部署_本地相机_远端推理.md`。这部分暂时只同步代码，不启动服务、不跑实时摄像头。
+* 新增文档：`docs/09_fall_7漏检诊断与新策略.md`。
+
+本地只读语法检查已通过：
+
+```text
+inference/multitarget_realtime_demo.py
+inference/realtime_core.py
+tools/run_real_video_eval.py
+tools/replay_fall_trend.py
+deploy/server.py
+deploy/client.py
+deploy/protocol.py
+```
+
+后续需要在服务器 `falldet` 环境做正式 `py_compile`，然后用 `--fall-trend` 重跑 `data/real_test/elder_fall`。
+
+## 后续工作原则
+
+* 不要把逻辑兜底说成模型能力提升；输出中必须保留红框/紫框语义。
+* 不要为了旧框连续性恢复 `detector.snapshot()` 全量绘制，否则拼接视频会出现旧骨架长期残留。
+* 长任务和训练必须用 `screen`。
+* 没有 labels CSV 时 `metrics.json={}` 是正常的；不能据此说 P/R/F1 不可算，只是缺少显式标签输入。
+* 若继续优化漏检，先跑推理策略 ablation，不要直接重训；重训只在用户明确要求并准备困难样本后进行。
+
+## 历史详细记录
 
 ## 5. 2026-06-20 远端准备度复核 (Remote Readiness Audit)
 

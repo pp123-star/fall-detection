@@ -78,6 +78,7 @@ from inference.batch_predict import load_action_model, predict_clip as _predict_
 from inference.realtime_core import (
     TimeAwareBuffer, TrackMerger, AlertPolicy, bbox_iou, bbox_center_dist_norm,
     PoseHeuristicScorer, ProbabilityLogger, VideoSummaryBuilder,
+    FallTrendDetector,
 )
 
 
@@ -173,16 +174,24 @@ class TrackState:
 
     底层缓冲是 TimeAwareBuffer。不传 target_fps/time_window 时,
     window_frames 退化为 clip_len,行为与原 deque(maxlen=clip_len) 等价。
+
+    历史序列(recent_*)用于 FallTrendDetector 的趋势分析:
+      - recent_raw_probs:   最近 N 次推理的 raw 概率
+      - recent_heuristics:  最近 N 次推理的 pose heuristic 分数
+      - recent_bboxes:      最近 N 帧的 bbox(每帧 push 时更新,密度高于推理)
     """
     track_id: int
     clip_len: int
     display_id: Optional[int] = None
     source_fps: float = 30.0
     time_window_sec: float = 0.0
-    recent_window: int = 10                # AlertPolicy 的 top-k 滑窗用
+    recent_window: int = 30                # AlertPolicy + FallTrendDetector 共用,扩到 30
+    recent_bbox_window: int = 60           # bbox 每帧记一次,需要更大窗口(2 秒@30fps)
 
     buffer: TimeAwareBuffer = field(default=None, repr=False)
     recent_raw_probs: deque = field(default=None, repr=False)
+    recent_heuristics: deque = field(default=None, repr=False)
+    recent_bboxes: deque = field(default=None, repr=False)
 
     bbox: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
     last_kpts: np.ndarray = field(default_factory=lambda: np.zeros((17, 2), dtype=np.float32))
@@ -214,6 +223,10 @@ class TrackState:
             )
         if self.recent_raw_probs is None:
             self.recent_raw_probs = deque(maxlen=max(self.recent_window, 5))
+        if self.recent_heuristics is None:
+            self.recent_heuristics = deque(maxlen=max(self.recent_window, 5))
+        if self.recent_bboxes is None:
+            self.recent_bboxes = deque(maxlen=max(self.recent_bbox_window, 10))
 
     @property
     def is_ready(self) -> bool:
@@ -222,6 +235,8 @@ class TrackState:
     def push(self, kpt: np.ndarray, score: np.ndarray, bbox: np.ndarray, frame_idx: int):
         self.buffer.push(kpt, score)
         self.bbox = bbox.astype(np.float32)
+        # 每帧 push 都记录 bbox 历史 (供 FallTrendDetector 策略 C 用)
+        self.recent_bboxes.append(self.bbox.copy())
         self.last_kpts = kpt.astype(np.float32)
         self.last_scores = score.astype(np.float32)
         self.last_seen_frame = frame_idx
@@ -238,6 +253,13 @@ class TrackState:
         self.last_prob = float(tomb.last_raw_prob)
         self.smoothed_prob = float(tomb.last_smoothed_prob)
         self.over_thr_streak = int(tomb.over_thr_streak)
+        # 继承历史序列(如果 tomb 有的话)
+        for hist_name in ("recent_raw_probs", "recent_heuristics", "recent_bboxes"):
+            tomb_hist = getattr(tomb, hist_name, None)
+            self_hist = getattr(self, hist_name, None)
+            if tomb_hist is not None and self_hist is not None:
+                for v in list(tomb_hist):
+                    self_hist.append(v)
 
     def adopt_state(self, other: "TrackState"):
         """从刚断开的 active track 继承状态,用于处理同帧/短间隔 ID 切换。"""
@@ -251,6 +273,8 @@ class TrackState:
         self.heuristic_reason = str(other.heuristic_reason or "")
         self.over_thr_streak = int(other.over_thr_streak)
         self.recent_raw_probs.extend(list(other.recent_raw_probs))
+        self.recent_heuristics.extend(list(other.recent_heuristics))
+        self.recent_bboxes.extend(list(other.recent_bboxes))
         self.alerted = bool(other.alerted)
         self.alert_frames_left = int(other.alert_frames_left)
         self.ever_alerted = bool(other.ever_alerted)
@@ -297,6 +321,8 @@ class MultiTrackFallDetector:
         lost_track_heuristic_thr: float = 0.45,
         lost_track_model_thr: float = 0.35,
         track_merge_same_frame: bool = False,
+        # FallTrendDetector — 趋势 + 几何 + 消失模式
+        fall_trend: Optional[FallTrendDetector] = None,
         # 兼容字段
         event_logger=None,
     ):
@@ -324,6 +350,7 @@ class MultiTrackFallDetector:
         self.lost_track_heuristic_thr = float(lost_track_heuristic_thr)
         self.lost_track_model_thr = float(lost_track_model_thr)
         self.track_merge_same_frame = bool(track_merge_same_frame)
+        self.fall_trend = fall_trend
         self.event_logger = event_logger
 
         self.tracks: Dict[int, TrackState] = {}
@@ -563,6 +590,8 @@ class MultiTrackFallDetector:
             else:
                 st.heuristic_score = 0.0
                 st.heuristic_reason = ""
+            # 每次推理后同步更新 heuristic 历史 (供 FallTrendDetector 用)
+            st.recent_heuristics.append(st.heuristic_score)
 
             # EMA 平滑
             if st.infer_count == 1:
@@ -572,6 +601,18 @@ class MultiTrackFallDetector:
 
             # 报警判定 + 写日志
             decision = self._update_alert(st, frame_idx, frame)
+
+            # FallTrendDetector 策略 B + C: 推理刚结束时立刻检查趋势 / 几何
+            # 这是对 fall_7 那种"信号上升但卡阈值前"的最早救援机会
+            if (
+                self.fall_trend is not None
+                and not st.ever_alerted
+                and not decision["alert_onset"]
+            ):
+                ft_decision = self._check_fall_trend_at_infer(st, frame_idx, frame)
+                if ft_decision is not None:
+                    # 触发后用 fall_trend 的结果覆盖 decision,确保后续 prob_logger / summary 正确记录
+                    decision = ft_decision
 
             # 记录:任何一次推理都写 prob log + summary
             if self.prob_logger is not None:
@@ -601,19 +642,47 @@ class MultiTrackFallDetector:
                 age = frame_idx - st.last_seen_frame
                 if age < self.lost_track_min_gap or st.lost_track_alerted or st.ever_alerted:
                     continue
-                model_signal = st.smoothed_prob >= self.lost_track_model_thr
+                # === bug fix ===
+                # 旧实现用 st.smoothed_prob 比 lost_track_model_thr,但 EMA 有滞后:
+                # fall_7 帧 133 时 raw=0.361 / smoothed 才 0.255,导致 model_signal=False。
+                # 改为看最近 3 次 raw 推理的最大值,能抓住"摔倒瞬间的瞬时高分"。
+                recent_raw_top3 = list(st.recent_raw_probs)[-3:] if st.recent_raw_probs else []
+                recent_max_raw = max(recent_raw_top3) if recent_raw_top3 else 0.0
+                model_signal = recent_max_raw >= self.lost_track_model_thr
                 logic_signal = st.heuristic_score >= self.lost_track_heuristic_thr
-                if not (model_signal or logic_signal):
+
+                # === FallTrendDetector 策略 A: disappearance ===
+                # 即使绝对阈值差一点点(fall_7 的 heur=0.449 vs 阈值 0.45),
+                # 只要 raw/heur 在 track 消失前呈"上升趋势 + 高位",就视为跌倒
+                disappear_res = None
+                if self.fall_trend is not None:
+                    disappear_res = self.fall_trend.check_disappearance(
+                        list(st.recent_raw_probs),
+                        list(st.recent_heuristics),
+                        track_age=age,
+                        min_lost_gap=self.lost_track_min_gap,
+                    )
+                disappear_signal = disappear_res is not None and disappear_res.alert
+
+                if not (model_signal or logic_signal or disappear_signal):
                     continue
+
                 reasons = [f"lost_gap={age}"]
                 if model_signal:
-                    reasons.append(f"pfall={st.smoothed_prob:.2f}")
+                    reasons.append(f"raw_max3={recent_max_raw:.2f}")
                 if logic_signal:
                     reasons.append(f"heur={st.heuristic_score:.2f}")
                     if st.heuristic_reason:
                         reasons.append(st.heuristic_reason)
+                if disappear_signal:
+                    reasons.append(disappear_res.strategy)
+                    reasons.append(disappear_res.reason)
                 reason = "track_lost_after_fall_pose:" + ",".join(reasons)
-                trigger = max(st.smoothed_prob, st.heuristic_score)
+                trigger = max(
+                    recent_max_raw,
+                    st.heuristic_score,
+                    disappear_res.score if disappear_signal else 0.0,
+                )
                 st.alerted = True
                 st.ever_alerted = True
                 st.lost_track_alerted = True
@@ -647,6 +716,34 @@ class MultiTrackFallDetector:
                  and not (st.alerted and st.alert_frames_left > 0)]
         for tid in stale:
             st = self.tracks[tid]
+            # === FallTrendDetector 策略 D: autopsy ===
+            # track 即将被永久清理,最后一次审判:看完整生命中是否有强迹象
+            if (
+                self.fall_trend is not None
+                and not st.ever_alerted
+            ):
+                au_res = self.fall_trend.check_autopsy(
+                    list(st.recent_raw_probs),
+                    list(st.recent_heuristics),
+                )
+                if au_res.alert:
+                    reason = f"autopsy:{au_res.reason}"
+                    if self.event_logger is not None:
+                        self.event_logger.log(
+                            frame_idx=frame_idx, track_id=st.display_id,
+                            fall_prob=au_res.score, bbox=st.bbox,
+                            source=self.source_name, event="onset",
+                            reason=reason, frame=None,
+                        )
+                    if self.summary is not None:
+                        self.summary.record_alert(
+                            frame_idx=frame_idx, track_id=st.display_id,
+                            prob=au_res.score, reason=reason,
+                        )
+                    self.alerted_ids.add(st.display_id)
+                    st.ever_alerted = True
+                    st.last_alert_reason = reason
+
             if self.track_merger is not None:
                 self.track_merger.register_death(
                     track_id=tid, last_frame=st.last_seen_frame,
@@ -659,6 +756,55 @@ class MultiTrackFallDetector:
             del self.tracks[tid]
         if self.track_merger is not None:
             self.track_merger.prune(frame_idx)
+
+    # --------------------------------------------------------
+    def _check_fall_trend_at_infer(self, st: TrackState, frame_idx: int, frame):
+        """每次推理后检查 FallTrendDetector 的策略 B (slope) + C (geometric)。
+
+        若触发,立即报警并返回符合 _update_alert 格式的 dict,
+        让上层逻辑能继续记录 prob_log / summary。
+        """
+        if self.fall_trend is None or st.ever_alerted:
+            return None
+
+        # 策略 B: 变化率 (raw_prob / heur 短窗口斜率)
+        slope_res = self.fall_trend.check_slope(
+            list(st.recent_raw_probs),
+            list(st.recent_heuristics),
+        )
+        if slope_res.alert:
+            return self._fire_fall_trend_alert(st, frame_idx, frame, slope_res)
+
+        # 策略 C: 几何形变 (bbox 高度急剧下降 + aspect 上升)
+        track_age = max(1, len(st.recent_bboxes))
+        geom_res = self.fall_trend.check_geometric(
+            list(st.recent_bboxes), track_age=track_age,
+        )
+        if geom_res.alert:
+            return self._fire_fall_trend_alert(st, frame_idx, frame, geom_res)
+        return None
+
+    # --------------------------------------------------------
+    def _fire_fall_trend_alert(self, st: TrackState, frame_idx, frame, res):
+        """统一发射 FallTrendDetector 触发的报警事件,返回标准 decision dict。"""
+        reason = f"fall_trend:{res.strategy}:{res.reason}"
+        st.alerted = True
+        st.ever_alerted = True
+        st.alert_frames_left = max(st.alert_frames_left, self.alert_hold_frames)
+        st.last_alert_reason = reason
+        self.alerted_ids.add(st.display_id)
+        if self.event_logger is not None:
+            self.event_logger.log(
+                frame_idx=frame_idx, track_id=st.display_id,
+                fall_prob=res.score, bbox=st.bbox,
+                source=self.source_name, event="onset",
+                reason=reason, frame=frame,
+            )
+        return {
+            "alert_onset": True,
+            "reason": reason,
+            "triggering_prob": float(res.score),
+        }
 
     # --------------------------------------------------------
     def _infer_one(self, st: TrackState, img_shape) -> float:
@@ -1077,6 +1223,30 @@ def run_multitarget_realtime(args):
             min_frames=args.pose_heuristic_min_frames,
         )
 
+    fall_trend = None
+    if args.fall_trend:
+        fall_trend = FallTrendDetector(
+            slope_window=args.fall_trend_slope_window,
+            slope_prob_thr=args.fall_trend_slope_prob_thr,
+            slope_heur_thr=args.fall_trend_slope_heur_thr,
+            slope_min_current=args.fall_trend_slope_min_current,
+            geom_window_frames=args.fall_trend_geom_window,
+            bbox_h_drop_ratio=args.fall_trend_bbox_h_drop,
+            aspect_rise=args.fall_trend_aspect_rise,
+            geom_track_age_min=args.fall_trend_geom_age_min,
+            disappear_lookback=args.fall_trend_disappear_lookback,
+            disappear_raw_min=args.fall_trend_disappear_raw_min,
+            disappear_heur_min=args.fall_trend_disappear_heur_min,
+            disappear_rising_tolerance=args.fall_trend_disappear_tolerance,
+            autopsy_max_raw_thr=args.fall_trend_autopsy_raw_thr,
+            autopsy_max_heur_thr=args.fall_trend_autopsy_heur_thr,
+            autopsy_late_peak_ratio=args.fall_trend_autopsy_late_peak,
+            enable_slope=not args.fall_trend_disable_slope,
+            enable_geometric=not args.fall_trend_disable_geom,
+            enable_disappear=not args.fall_trend_disable_disappear,
+            enable_autopsy=not args.fall_trend_disable_autopsy,
+        )
+
     # 5. 检测器
     detector = MultiTrackFallDetector(
         predictor=predictor,
@@ -1102,6 +1272,7 @@ def run_multitarget_realtime(args):
         lost_track_heuristic_thr=args.lost_track_heuristic_thr,
         lost_track_model_thr=args.lost_track_model_thr,
         track_merge_same_frame=args.track_merge_same_frame,
+        fall_trend=fall_trend,
         event_logger=event_logger,
     )
 
@@ -1280,6 +1451,47 @@ def build_argparser():
                    help="track 消失前启发式分数达到该值时触发 lost-track 兜底")
     p.add_argument("--lost-track-model-thr", type=float, default=0.35,
                    help="track 消失前模型平滑分数达到该值时触发 lost-track 兜底")
+
+    # FallTrendDetector — 趋势 + 几何 + 消失模式 (4 个互补策略)
+    p.add_argument("--fall-trend", action="store_true",
+                   help="启用 FallTrendDetector (4 个互补策略: slope/geom/disappear/autopsy)")
+    p.add_argument("--fall-trend-slope-window", type=int, default=5,
+                   help="策略 B: slope 回看推理次数")
+    p.add_argument("--fall-trend-slope-prob-thr", type=float, default=0.05,
+                   help="策略 B: raw_prob 斜率阈值 (per-推理次)")
+    p.add_argument("--fall-trend-slope-heur-thr", type=float, default=0.08,
+                   help="策略 B: heuristic 斜率阈值")
+    p.add_argument("--fall-trend-slope-min-current", type=float, default=0.28,
+                   help="策略 B: 当前值至少达此值才触发")
+    p.add_argument("--fall-trend-geom-window", type=int, default=15,
+                   help="策略 C: 几何形变看最近 N 帧 bbox")
+    p.add_argument("--fall-trend-bbox-h-drop", type=float, default=0.35,
+                   help="策略 C: bbox 高度下降比例")
+    p.add_argument("--fall-trend-aspect-rise", type=float, default=0.10,
+                   help="策略 C: aspect 上升绝对值")
+    p.add_argument("--fall-trend-geom-age-min", type=int, default=3)
+    p.add_argument("--fall-trend-disappear-lookback", type=int, default=4,
+                   help="策略 A: 消失前回看推理次数")
+    p.add_argument("--fall-trend-disappear-raw-min", type=float, default=0.28,
+                   help="策略 A: raw 最低高位阈值")
+    p.add_argument("--fall-trend-disappear-heur-min", type=float, default=0.32,
+                   help="策略 A: heuristic 最低高位阈值")
+    p.add_argument("--fall-trend-disappear-tolerance", type=float, default=0.03,
+                   help="策略 A: 上升判定的回撤容忍")
+    p.add_argument("--fall-trend-autopsy-raw-thr", type=float, default=0.30,
+                   help="策略 D: track 死亡审判 raw 阈值")
+    p.add_argument("--fall-trend-autopsy-heur-thr", type=float, default=0.35,
+                   help="策略 D: track 死亡审判 heuristic 阈值")
+    p.add_argument("--fall-trend-autopsy-late-peak", type=float, default=0.5,
+                   help="策略 D: 峰值需出现在生命的后多少比例")
+    p.add_argument("--fall-trend-disable-slope", action="store_true",
+                   help="关闭策略 B (slope)")
+    p.add_argument("--fall-trend-disable-geom", action="store_true",
+                   help="关闭策略 C (geometric)")
+    p.add_argument("--fall-trend-disable-disappear", action="store_true",
+                   help="关闭策略 A (disappearance)")
+    p.add_argument("--fall-trend-disable-autopsy", action="store_true",
+                   help="关闭策略 D (autopsy)")
 
     # YOLO
     p.add_argument("--conf", type=float, default=0.25)

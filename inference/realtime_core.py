@@ -437,6 +437,218 @@ class PoseHeuristicScorer:
         return float(np.clip((x - lo) / (hi - lo), 0.0, 1.0))
 
 
+# ============================================================
+# 6.5) FallTrendDetector — 趋势 + 几何 + 消失前留迹的复合检测
+#
+# 解决 elder_fall_7 那种"信号正在上升但卡在阈值前 0.001"的临界情况。
+# 与 PoseHeuristicScorer 互补:那个看单帧/短窗口姿态,这个看时间序列变化。
+# ============================================================
+@dataclass
+class FallTrendResult:
+    """单次趋势检测结果。"""
+    alert: bool
+    strategy: str
+    reason: str
+    score: float
+
+
+class FallTrendDetector:
+    """趋势 + 几何 + 消失模式的复合摔倒检测器。"""
+
+    def __init__(
+        self,
+        slope_window: int = 5,
+        slope_prob_thr: float = 0.05,
+        slope_heur_thr: float = 0.08,
+        slope_min_current: float = 0.28,
+        geom_window_frames: int = 15,
+        bbox_h_drop_ratio: float = 0.35,
+        aspect_rise: float = 0.10,
+        geom_track_age_min: int = 3,
+        disappear_lookback: int = 4,
+        disappear_raw_min: float = 0.28,
+        disappear_heur_min: float = 0.32,
+        disappear_rising_tolerance: float = 0.03,
+        autopsy_max_raw_thr: float = 0.30,
+        autopsy_max_heur_thr: float = 0.35,
+        autopsy_late_peak_ratio: float = 0.5,
+        enable_slope: bool = True,
+        enable_geometric: bool = True,
+        enable_disappear: bool = True,
+        enable_autopsy: bool = True,
+    ):
+        self.slope_window = max(2, int(slope_window))
+        self.slope_prob_thr = float(slope_prob_thr)
+        self.slope_heur_thr = float(slope_heur_thr)
+        self.slope_min_current = float(slope_min_current)
+
+        self.geom_window_frames = max(3, int(geom_window_frames))
+        self.bbox_h_drop_ratio = float(bbox_h_drop_ratio)
+        self.aspect_rise = float(aspect_rise)
+        self.geom_track_age_min = max(0, int(geom_track_age_min))
+
+        self.disappear_lookback = max(2, int(disappear_lookback))
+        self.disappear_raw_min = float(disappear_raw_min)
+        self.disappear_heur_min = float(disappear_heur_min)
+        self.disappear_rising_tolerance = float(disappear_rising_tolerance)
+
+        self.autopsy_max_raw_thr = float(autopsy_max_raw_thr)
+        self.autopsy_max_heur_thr = float(autopsy_max_heur_thr)
+        self.autopsy_late_peak_ratio = float(np.clip(autopsy_late_peak_ratio, 0.1, 0.95))
+
+        self.enable_slope = bool(enable_slope)
+        self.enable_geometric = bool(enable_geometric)
+        self.enable_disappear = bool(enable_disappear)
+        self.enable_autopsy = bool(enable_autopsy)
+
+    @staticmethod
+    def _slope(values) -> float:
+        vs = [float(v) for v in values]
+        if len(vs) < 2:
+            return 0.0
+        return (vs[-1] - vs[0]) / (len(vs) - 1)
+
+    @staticmethod
+    def _is_rising(values, tolerance: float = 0.03) -> bool:
+        vs = [float(v) for v in values]
+        if len(vs) < 2:
+            return False
+        prev = vs[0]
+        ups = 0
+        for v in vs[1:]:
+            if v >= prev - tolerance:
+                ups += 1
+            prev = v
+        return ups >= len(vs) - 2
+
+    def check_slope(self, raw_probs, heuristics) -> FallTrendResult:
+        if not self.enable_slope:
+            return FallTrendResult(False, "slope", "", 0.0)
+
+        raw = list(raw_probs)[-self.slope_window:]
+        heur = list(heuristics)[-self.slope_window:]
+
+        if len(raw) >= 3:
+            slope = self._slope(raw)
+            cur = float(raw[-1])
+            if slope >= self.slope_prob_thr and cur >= self.slope_min_current:
+                trig = float(np.clip(cur + slope, 0.0, 1.0))
+                return FallTrendResult(True, "slope_prob", f"slope={slope:.3f},cur={cur:.2f}", trig)
+
+        if len(heur) >= 3:
+            slope = self._slope(heur)
+            cur = float(heur[-1])
+            if slope >= self.slope_heur_thr and cur >= self.slope_min_current:
+                trig = float(np.clip(cur + slope, 0.0, 1.0))
+                return FallTrendResult(True, "slope_heur", f"slope={slope:.3f},cur={cur:.2f}", trig)
+
+        return FallTrendResult(False, "slope", "", 0.0)
+
+    def check_geometric(self, bboxes, track_age: int = 999) -> FallTrendResult:
+        if not self.enable_geometric or track_age < self.geom_track_age_min:
+            return FallTrendResult(False, "geometric", "", 0.0)
+
+        bb = list(bboxes)[-self.geom_window_frames:]
+        if len(bb) < 3:
+            return FallTrendResult(False, "geometric", "", 0.0)
+
+        arr = np.asarray(bb, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != 4:
+            return FallTrendResult(False, "geometric", "", 0.0)
+
+        heights = arr[:, 3] - arr[:, 1]
+        widths = arr[:, 2] - arr[:, 0]
+        aspects = widths / np.maximum(heights, 1.0)
+
+        n = len(heights)
+        q = max(1, n // 4)
+        h_first = float(np.median(heights[:q]))
+        h_last = float(np.median(heights[-q:]))
+        h_drop = (h_first - h_last) / max(h_first, 1.0)
+
+        a_first = float(np.median(aspects[:q]))
+        a_last = float(np.median(aspects[-q:]))
+        a_rise = a_last - a_first
+
+        h_strong = h_drop >= self.bbox_h_drop_ratio
+        a_strong = a_rise >= self.aspect_rise
+        h_half = h_drop >= self.bbox_h_drop_ratio * 0.5
+        a_half = a_rise >= self.aspect_rise * 0.5
+
+        if (h_strong and a_half) or (a_strong and h_half):
+            score = float(np.clip(
+                0.5 * (h_drop / max(self.bbox_h_drop_ratio, 1e-6))
+                + 0.5 * (a_rise / max(self.aspect_rise, 1e-6)),
+                0.0, 1.0,
+            ))
+            return FallTrendResult(True, "geometric", f"h_drop={h_drop:.2f},a_rise={a_rise:.2f}", score)
+        return FallTrendResult(False, "geometric", "", 0.0)
+
+    def check_disappearance(
+        self, raw_probs, heuristics,
+        track_age: int, min_lost_gap: int,
+    ) -> FallTrendResult:
+        if not self.enable_disappear or track_age < min_lost_gap:
+            return FallTrendResult(False, "disappear", "", 0.0)
+
+        k = self.disappear_lookback
+        tail_raw = list(raw_probs)[-k:]
+        tail_heur = list(heuristics)[-k:]
+
+        if len(tail_heur) >= 2:
+            max_h = float(max(tail_heur))
+            if max_h >= self.disappear_heur_min and self._is_rising(
+                tail_heur, self.disappear_rising_tolerance
+            ):
+                return FallTrendResult(
+                    True, "disappear_heur",
+                    f"max_heur={max_h:.2f},age={track_age},rising_tail={tail_heur}",
+                    max_h,
+                )
+
+        if len(tail_raw) >= 2:
+            max_r = float(max(tail_raw))
+            if max_r >= self.disappear_raw_min and self._is_rising(
+                tail_raw, self.disappear_rising_tolerance
+            ):
+                return FallTrendResult(
+                    True, "disappear_raw",
+                    f"max_raw={max_r:.2f},age={track_age},rising_tail={tail_raw}",
+                    max_r,
+                )
+
+        return FallTrendResult(False, "disappear", "", 0.0)
+
+    def check_autopsy(self, raw_probs, heuristics) -> FallTrendResult:
+        if not self.enable_autopsy:
+            return FallTrendResult(False, "autopsy", "", 0.0)
+
+        raw = list(raw_probs)
+        heur = list(heuristics)
+        if not raw and not heur:
+            return FallTrendResult(False, "autopsy", "", 0.0)
+
+        max_r = float(max(raw)) if raw else 0.0
+        max_h = float(max(heur)) if heur else 0.0
+        n = max(len(raw), len(heur))
+        if n == 0:
+            return FallTrendResult(False, "autopsy", "", 0.0)
+
+        peak_r_pos = (int(np.argmax(raw)) / max(len(raw) - 1, 1)) if raw else 0.0
+        peak_h_pos = (int(np.argmax(heur)) / max(len(heur) - 1, 1)) if heur else 0.0
+        late_r = peak_r_pos >= self.autopsy_late_peak_ratio
+        late_h = peak_h_pos >= self.autopsy_late_peak_ratio
+
+        if (max_r >= self.autopsy_max_raw_thr and late_r) or \
+           (max_h >= self.autopsy_max_heur_thr and late_h):
+            return FallTrendResult(
+                True, "autopsy",
+                f"max_raw={max_r:.2f},max_heur={max_h:.2f},late_peak={peak_r_pos:.2f}/{peak_h_pos:.2f}",
+                max(max_r, max_h),
+            )
+        return FallTrendResult(False, "autopsy", "", 0.0)
+
+
 class ProbabilityLogger:
     """记录每一次动作分类概率,让未报警视频也能做事后诊断。"""
 
