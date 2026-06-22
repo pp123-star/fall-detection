@@ -47,19 +47,19 @@ purple = logic-only fallback
 上一轮服务器输出：
 
 ```text
-/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_falltrend_20260622_002414
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_poseinterp_20260623_000706
 ```
 
 结果：
 
 ```text
-12 videos processed
+12 overlays / 12 summaries / 12 event logs / 12 probability logs
 failure_cases.csv is empty
 metrics.json = {} because no labels CSV was supplied
-elder_fall_7.mp4 was rescued by fall_trend at frame 131, max_pfall=0.361
+elder_fall_7.mp4: detected, max_pfall=0.9365
 ```
 
-`elder_fall_7` 的主要问题不是单纯骨架识别失败，而是摔倒过程短、ID/pose 连续性弱、模型 raw/heuristic 信号临界。`FallTrendDetector` 可以救这类临界漏检，但它是工程兜底，不是纯 PoseConv3D 模型识别能力。
+本轮显式启用 `--pose-interp`，目标是缓解短时跟丢造成的骨架序列断流。它仍是部署侧输入连续性增强，不是重新训练或更换模型。
 
 ## 分布式摄像头方案
 
@@ -1830,4 +1830,30 @@ deploy/client.py
 ```text
 python -m py_compile inference/realtime_core.py inference/multitarget_realtime_demo.py tools/run_real_video_eval.py deploy/server.py deploy/client.py deploy/protocol.py
 PoseInterpolator smoke test: kpts=(17,2), scores=(17,), bbox=(4,), mean_score=0.85
+```
+
+服务器重跑：
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_poseinterp_20260623_000706
+```
+
+运行参数重点：
+
+```text
+--track-merge --track-merge-same-frame --track-merge-gap 60
+--fall-trend --pose-interp
+--time-window-sec 1.6 --infer-every 2 --conf 0.15 --imgsz 960
+```
+
+结果：
+
+```text
+12 overlays
+12 summaries
+12 event logs
+12 probability logs
+failure_cases.csv only has header
+metrics.json = {} because no labels CSV was supplied
+elder_fall_7.mp4: detected, max_pfall=0.9365
 ```

@@ -840,3 +840,50 @@ elder_fall_7.mp4: rescued by fall_trend at frame 131, max_pfall=0.361
 Interpretation:
 
 The improved `elder_fall_7` result is an engineering fallback result, not proof that the PoseConv3D checkpoint itself learned the case. Overlay colors were later clarified so `fall_trend` / `autopsy` fallback draws orange, model-involved fall draws red, and pure logic fallback draws purple.
+
+### Pose Interpolation Tracking-Continuity Evaluation
+
+Date: 2026-06-23.
+
+This was not a training run. No checkpoints were created, replaced, or deleted.
+
+Code/evaluation focus:
+
+* Enable `--pose-interp` to extrapolate short-gap COCO-17 skeletons with decayed keypoint scores.
+* Keep YOLO pose/track weights unchanged.
+* Keep PoseConv3D checkpoint unchanged: `work_dirs/posec3d_fall_binary/best_acc_top1_epoch_5.pth`.
+
+Server output:
+
+```text
+/root/autodl-tmp/fall-detection/outputs/real_eval/elder_fall_poseinterp_20260623_000706
+```
+
+Input:
+
+```text
+data/real_test/elder_fall
+12 videos
+```
+
+Key command options:
+
+```text
+--track-merge --track-merge-same-frame --track-merge-gap 60
+--fall-trend --pose-interp
+--time-window-sec 1.6 --infer-every 2 --conf 0.15 --imgsz 960
+```
+
+Result summary:
+
+```text
+12 overlays generated
+12 summaries generated
+failure_cases.csv only has the header
+metrics.json = {} because no labels CSV was supplied
+elder_fall_7.mp4: detected, max_pfall=0.9365
+```
+
+Interpretation:
+
+This result is a deployment-side tracking-continuity improvement. It reduces short skeleton gaps before PoseConv3D inference, but it is still not a new model-training result.
