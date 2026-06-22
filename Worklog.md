@@ -1815,20 +1815,15 @@ deploy/server.py
 deploy/client.py
 ```
 
-采用内容：
+本轮改动：
 
 * 新增 `SimpleKalmanBoxTracker`：记录 bbox 中心速度，短时跟丢时预测当前 bbox。
 * 新增 `PoseInterpolator`：在 `--pose-interp` 开启时，对短时缺失 track 外推 COCO-17 骨架，keypoint score 按帧衰减，避免把外推帧伪装成高置信真实检测。
 * `TrackMerger` 支持用 tombstone 的 Kalman 预测位置匹配新 ID，增强短时丢失后的同人接力。
 * `run_real_video_eval.py` 透传 `--pose-interp` 参数，便于批量跑同一目录做对比。
 * 分布式 server/client 增加 `alert_source` 和外推状态显示字段。
-
-未直接采用/已修正的风险点：
-
-* 没有更换 YOLO pose/track 模型，仍保持当前骨架输入分布。
-* 没有把 `--pose-interp` 设为默认开启；必须显式传参，方便与旧版本对比。
-* 保留红/橙/紫语义：只有模型参与时红框；纯 `fall_trend/autopsy` 橙框；纯传统逻辑兜底紫框。Claude 原始文件中可能回退 HUD/overlay 颜色优先级的部分没有整文件覆盖。
-* 逻辑兜底不是本阶段主要增强方向，本轮重点是减少 YOLO pose/track 短时跟丢造成的模型输入断流。
+* 保持 YOLO pose/track 模型不变；`--pose-interp` 默认关闭，批量对比时显式开启。
+* 保留红/橙/紫语义：只有模型参与时红框；纯 `fall_trend/autopsy` 橙框；纯传统逻辑兜底紫框。
 
 本地检查：
 
