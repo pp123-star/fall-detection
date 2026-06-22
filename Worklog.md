@@ -31,6 +31,7 @@ inference/realtime_core.py
 * `track_merge` + `track_merge_same_frame`：处理 ID 切换和同帧拆分，尽量保持动作 clip 连续。
 * stale overlay suppression：内部保留长 track 用于接力，但 overlay 只短暂绘制旧 track，避免旧框污染后续画面。
 * `FallTrendDetector`：新增趋势/几何/消失/清理前复合检测，用于救 `elder_fall_7` 这类临界漏检。
+* `PoseInterpolator` + `SimpleKalmanBoxTracker`：显式 `--pose-interp` 开关，短时跟丢时外推 COCO-17 骨架并衰减 keypoint score，目标是让 PoseConv3D buffer 不在 5-8 帧短缺口内断流。
 
 颜色语义：
 
@@ -94,6 +95,7 @@ deploy/protocol.py
 * 长任务和训练必须用 `screen`。
 * 没有 labels CSV 时 `metrics.json={}` 是正常的；不能据此说 P/R/F1 不可算，只是缺少显式标签输入。
 * 当前最严重的问题是 YOLO pose/track 在顽固视频里容易跟丢，导致 PoseConv3D 拿不到连续骨架；逻辑检测现阶段不作为主要增强方向。若后续重训，只在用户明确要求并准备困难样本后进行。
+* `--pose-interp` 是实验性跟踪连续性增强，默认关闭；跑对比时必须在输出目录名里标明是否启用。
 
 ## 历史详细记录
 
@@ -1799,3 +1801,38 @@ elder_fall_7.mp4: fall_trend rescued at frame 131, max_pfall=0.361
 * 若模型判断和趋势/逻辑同时发生，框仍为红色，但标签会写出 `MODEL+TREND FALL` 或 `MODEL+LOGIC FALL`。
 * 后续如研究更强 YOLO pose/track 或跟踪接力方案，必须保证输出骨架格式、COCO 17 点顺序、坐标尺度和置信度分布与当前 PoseConv3D 训练输入兼容。
 * 当前最严重问题是跟踪模型容易跟丢，逻辑检测现阶段没必要继续加强。
+
+### 10.25 files-3 跟踪连续性增强合并
+
+从 `D:\AAA\基于深度学习的视频动作识别技术研究\add\files-3` 合并跟踪连续性相关内容：
+
+```text
+docs/12_跟踪连续性强化.md
+inference/realtime_core.py
+inference/multitarget_realtime_demo.py
+tools/run_real_video_eval.py
+deploy/server.py
+deploy/client.py
+```
+
+采用内容：
+
+* 新增 `SimpleKalmanBoxTracker`：记录 bbox 中心速度，短时跟丢时预测当前 bbox。
+* 新增 `PoseInterpolator`：在 `--pose-interp` 开启时，对短时缺失 track 外推 COCO-17 骨架，keypoint score 按帧衰减，避免把外推帧伪装成高置信真实检测。
+* `TrackMerger` 支持用 tombstone 的 Kalman 预测位置匹配新 ID，增强短时丢失后的同人接力。
+* `run_real_video_eval.py` 透传 `--pose-interp` 参数，便于批量跑同一目录做对比。
+* 分布式 server/client 增加 `alert_source` 和外推状态显示字段。
+
+未直接采用/已修正的风险点：
+
+* 没有更换 YOLO pose/track 模型，仍保持当前骨架输入分布。
+* 没有把 `--pose-interp` 设为默认开启；必须显式传参，方便与旧版本对比。
+* 保留红/橙/紫语义：只有模型参与时红框；纯 `fall_trend/autopsy` 橙框；纯传统逻辑兜底紫框。Claude 原始文件中可能回退 HUD/overlay 颜色优先级的部分没有整文件覆盖。
+* 逻辑兜底不是本阶段主要增强方向，本轮重点是减少 YOLO pose/track 短时跟丢造成的模型输入断流。
+
+本地检查：
+
+```text
+python -m py_compile inference/realtime_core.py inference/multitarget_realtime_demo.py tools/run_real_video_eval.py deploy/server.py deploy/client.py deploy/protocol.py
+PoseInterpolator smoke test: kpts=(17,2), scores=(17,), bbox=(4,), mean_score=0.85
+```

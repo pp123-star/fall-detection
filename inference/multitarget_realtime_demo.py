@@ -78,7 +78,7 @@ from inference.batch_predict import load_action_model, predict_clip as _predict_
 from inference.realtime_core import (
     TimeAwareBuffer, TrackMerger, AlertPolicy, bbox_iou, bbox_center_dist_norm,
     PoseHeuristicScorer, ProbabilityLogger, VideoSummaryBuilder,
-    FallTrendDetector,
+    FallTrendDetector, SimpleKalmanBoxTracker, PoseInterpolator, AlertSource,
 )
 
 
@@ -95,6 +95,7 @@ COLOR_NORMAL = (60, 200, 60)
 COLOR_FALL = (60, 60, 240)
 COLOR_TREND_FALL = (0, 165, 255)
 COLOR_LOGIC_FALL = (220, 60, 220)
+COLOR_INTERP = (100, 160, 220)
 COLOR_NOID = (160, 160, 160)
 
 
@@ -212,6 +213,11 @@ class TrackState:
     ever_alerted: bool = False
     last_alert_reason: str = ""
     lost_track_alerted: bool = False
+    kalman: Optional[SimpleKalmanBoxTracker] = field(default=None, repr=False)
+    n_interpolated_frames: int = 0
+    total_interpolated_frames: int = 0
+    last_real_seen_frame: int = -1
+    alert_source_tag: str = ""
 
     def __post_init__(self):
         if self.display_id is None:
@@ -241,7 +247,24 @@ class TrackState:
         self.last_kpts = kpt.astype(np.float32)
         self.last_scores = score.astype(np.float32)
         self.last_seen_frame = frame_idx
+        self.last_real_seen_frame = frame_idx
         self.frames_since_infer += 1
+        self.n_interpolated_frames = 0
+        if self.kalman is None:
+            self.kalman = SimpleKalmanBoxTracker(self.bbox, frame_idx)
+        else:
+            self.kalman.update(self.bbox, frame_idx)
+
+    def push_interpolated(self, interp_frame, frame_idx: int):
+        self.buffer.push(interp_frame.kpts, interp_frame.scores)
+        self.bbox = interp_frame.bbox.astype(np.float32)
+        self.recent_bboxes.append(self.bbox.copy())
+        self.last_kpts = interp_frame.kpts.astype(np.float32)
+        self.last_scores = interp_frame.scores.astype(np.float32)
+        self.last_seen_frame = frame_idx
+        self.frames_since_infer += 1
+        self.n_interpolated_frames += 1
+        self.total_interpolated_frames += 1
 
     def adopt(self, tomb):
         """从 tombstone 继承历史 buffer + 概率状态。"""
@@ -254,6 +277,9 @@ class TrackState:
         self.last_prob = float(tomb.last_raw_prob)
         self.smoothed_prob = float(tomb.last_smoothed_prob)
         self.over_thr_streak = int(tomb.over_thr_streak)
+        kalman = getattr(tomb, "kalman", None)
+        if kalman is not None:
+            self.kalman = kalman
         # 继承历史序列(如果 tomb 有的话)
         for hist_name in ("recent_raw_probs", "recent_heuristics", "recent_bboxes"):
             tomb_hist = getattr(tomb, hist_name, None)
@@ -276,11 +302,15 @@ class TrackState:
         self.recent_raw_probs.extend(list(other.recent_raw_probs))
         self.recent_heuristics.extend(list(other.recent_heuristics))
         self.recent_bboxes.extend(list(other.recent_bboxes))
+        if other.kalman is not None:
+            self.kalman = other.kalman
+        self.last_real_seen_frame = int(other.last_real_seen_frame)
         self.alerted = bool(other.alerted)
         self.alert_frames_left = int(other.alert_frames_left)
         self.ever_alerted = bool(other.ever_alerted)
         self.last_alert_reason = str(other.last_alert_reason or "")
         self.lost_track_alerted = bool(other.lost_track_alerted)
+        self.alert_source_tag = str(other.alert_source_tag or "")
 
 
 # ============================================================
@@ -324,6 +354,7 @@ class MultiTrackFallDetector:
         track_merge_same_frame: bool = False,
         # FallTrendDetector — 趋势 + 几何 + 消失模式
         fall_trend: Optional[FallTrendDetector] = None,
+        pose_interpolator: Optional[PoseInterpolator] = None,
         # 兼容字段
         event_logger=None,
     ):
@@ -352,6 +383,7 @@ class MultiTrackFallDetector:
         self.lost_track_model_thr = float(lost_track_model_thr)
         self.track_merge_same_frame = bool(track_merge_same_frame)
         self.fall_trend = fall_trend
+        self.pose_interpolator = pose_interpolator
         self.event_logger = event_logger
 
         self.tracks: Dict[int, TrackState] = {}
@@ -566,10 +598,45 @@ class MultiTrackFallDetector:
             self.tracks[tid].push(kpt, scr, bboxes[i], frame_idx)
             seen_now.add(tid)
 
+        # 1.5) Tracking continuity: keep short lost tracks feeding the pose buffer.
+        if self.pose_interpolator is not None:
+            for tid, st in list(self.tracks.items()):
+                if tid in seen_now:
+                    continue
+                if st.kalman is None or st.last_real_seen_frame < 0:
+                    continue
+                gap = frame_idx - st.last_real_seen_frame
+                if gap < 1:
+                    continue
+
+                pred_bbox = st.kalman.predict_bbox(frame_idx)
+                pred_bbox = np.array([
+                    np.clip(pred_bbox[0], 0, W - 1),
+                    np.clip(pred_bbox[1], 0, H - 1),
+                    np.clip(pred_bbox[2], 0, W - 1),
+                    np.clip(pred_bbox[3], 0, H - 1),
+                ], dtype=np.float32)
+                hist_kpts = list(st.buffer.kpts)[-6:]
+                hist_scores = list(st.buffer.scores)[-6:]
+                hist_bboxes = list(st.recent_bboxes)[-6:]
+                interp_frame = self.pose_interpolator.extrapolate_one(
+                    hist_kpts,
+                    hist_scores,
+                    hist_bboxes,
+                    gap=st.n_interpolated_frames + 1,
+                    kalman_predicted_bbox=pred_bbox,
+                )
+                if interp_frame is None:
+                    continue
+                st.push_interpolated(interp_frame, frame_idx)
+
         # 2. 调度推理(交错相位)
         infer_ms_accum = 0.0
         for tid, st in self.tracks.items():
-            if tid not in seen_now or not st.is_ready:
+            if not st.is_ready:
+                continue
+            was_pushed = (tid in seen_now) or (st.last_seen_frame == frame_idx)
+            if not was_pushed:
                 continue
             first_time = st.infer_count == 0
             phase_due = (frame_idx % self.infer_every) == (tid % self.infer_every)
@@ -687,6 +754,7 @@ class MultiTrackFallDetector:
                 st.alerted = True
                 st.ever_alerted = True
                 st.lost_track_alerted = True
+                st.alert_source_tag = "trend" if disappear_signal and not (model_signal or logic_signal) else "logic"
                 st.alert_frames_left = max(st.alert_frames_left, self.alert_hold_frames)
                 st.last_alert_reason = reason
                 self.alerted_ids.add(st.display_id)
@@ -744,6 +812,7 @@ class MultiTrackFallDetector:
                     self.alerted_ids.add(st.display_id)
                     st.ever_alerted = True
                     st.last_alert_reason = reason
+                    st.alert_source_tag = "trend"
 
             if self.track_merger is not None:
                 self.track_merger.register_death(
@@ -753,6 +822,10 @@ class MultiTrackFallDetector:
                     last_smoothed_prob=st.smoothed_prob,
                     last_raw_prob=st.last_prob,
                     over_thr_streak=st.over_thr_streak,
+                    kalman=st.kalman,
+                    recent_raw_probs=st.recent_raw_probs,
+                    recent_heuristics=st.recent_heuristics,
+                    recent_bboxes=st.recent_bboxes,
                 )
             del self.tracks[tid]
         if self.track_merger is not None:
@@ -793,6 +866,7 @@ class MultiTrackFallDetector:
         st.ever_alerted = True
         st.alert_frames_left = max(st.alert_frames_left, self.alert_hold_frames)
         st.last_alert_reason = reason
+        st.alert_source_tag = "trend"
         self.alerted_ids.add(st.display_id)
         if self.event_logger is not None:
             self.event_logger.log(
@@ -852,11 +926,13 @@ class MultiTrackFallDetector:
             should_alert = d.alert
             reason = d.reason
             trig_prob = d.triggering_prob
+            source_tag = "model" if should_alert else ""
         else:
             # 旧逻辑:连续 K 次 smoothed > threshold
             should_alert = st.over_thr_streak >= self.alert_k and st.smoothed_prob >= self.threshold
             reason = "consec_mid" if should_alert else ""
             trig_prob = st.smoothed_prob
+            source_tag = "model" if should_alert else ""
 
         if (
             not should_alert
@@ -868,12 +944,15 @@ class MultiTrackFallDetector:
             if st.heuristic_reason:
                 reason = f"{reason}:{st.heuristic_reason}"
             trig_prob = st.heuristic_score
+            source_tag = "logic"
 
         # 状态机:首次触发 → onset;持续超阈值 → 维持 alert_frames_left
         alert_onset = False
         if should_alert:
             st.alert_frames_left = self.alert_hold_frames
             st.last_alert_reason = reason
+            if source_tag:
+                st.alert_source_tag = source_tag
             if not st.alerted:
                 st.alerted = True
                 st.ever_alerted = True
@@ -991,6 +1070,8 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
             color = COLOR_TREND_FALL
         elif logic_alert:
             color = COLOR_LOGIC_FALL
+        elif getattr(st, "n_interpolated_frames", 0) > 0:
+            color = COLOR_INTERP
         else:
             color = COLOR_NORMAL
         _draw_skeleton(frame, st.last_kpts, st.last_scores, color, kpt_thr)
@@ -1007,6 +1088,8 @@ def draw_multitrack_overlay(frame, tracks: List[TrackState], threshold, kpt_thr,
                 status = "TREND FALL"
             elif logic_alert:
                 status = "LOGIC FALL"
+            elif getattr(st, "n_interpolated_frames", 0) > 0:
+                status = f"INTERP({st.n_interpolated_frames})"
             elif is_fall:
                 status = "MODEL FALL"
             else:
@@ -1297,6 +1380,16 @@ def run_multitarget_realtime(args):
             enable_autopsy=not args.fall_trend_disable_autopsy,
         )
 
+    pose_interpolator = None
+    if args.pose_interp:
+        pose_interpolator = PoseInterpolator(
+            max_extrapolation_frames=args.pose_interp_max,
+            score_decay=args.pose_interp_score_decay,
+            velocity_window=args.pose_interp_velocity_window,
+            min_history_required=args.pose_interp_min_history,
+            anchor_to_kalman=not args.pose_interp_no_anchor,
+        )
+
     # 5. 检测器
     detector = MultiTrackFallDetector(
         predictor=predictor,
@@ -1323,6 +1416,7 @@ def run_multitarget_realtime(args):
         lost_track_model_thr=args.lost_track_model_thr,
         track_merge_same_frame=args.track_merge_same_frame,
         fall_trend=fall_trend,
+        pose_interpolator=pose_interpolator,
         event_logger=event_logger,
     )
 
@@ -1542,6 +1636,20 @@ def build_argparser():
                    help="关闭策略 A (disappearance)")
     p.add_argument("--fall-trend-disable-autopsy", action="store_true",
                    help="关闭策略 D (autopsy)")
+
+    # Tracking continuity: short-gap pose extrapolation.
+    p.add_argument("--pose-interp", action="store_true",
+                   help="短时跟丢时外推骨架并继续喂 buffer,默认关闭")
+    p.add_argument("--pose-interp-max", type=int, default=8,
+                   help="最大连续外推帧数")
+    p.add_argument("--pose-interp-score-decay", type=float, default=0.85,
+                   help="每外推一帧 keypoint score 的衰减系数")
+    p.add_argument("--pose-interp-velocity-window", type=int, default=4,
+                   help="用最近 N 帧估算骨架速度")
+    p.add_argument("--pose-interp-min-history", type=int, default=3,
+                   help="至少有 N 帧历史才允许外推")
+    p.add_argument("--pose-interp-no-anchor", action="store_true",
+                   help="关闭 Kalman bbox 锚定")
 
     # YOLO
     p.add_argument("--conf", type=float, default=0.25)

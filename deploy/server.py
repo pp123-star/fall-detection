@@ -56,7 +56,7 @@ from deploy.protocol import (
 # 复用现有组件
 from inference.realtime_core import (
     TrackMerger, AlertPolicy, PoseHeuristicScorer,
-    FallTrendDetector,
+    FallTrendDetector, PoseInterpolator,
 )
 from inference.multitarget_realtime_demo import (
     MultiTrackFallDetector, CachedClipPredictor,
@@ -175,6 +175,15 @@ class FallDetectionSession:
             )
 
         fall_trend = FallTrendDetector() if args.fall_trend else None
+        pose_interpolator = None
+        if args.pose_interp:
+            pose_interpolator = PoseInterpolator(
+                max_extrapolation_frames=args.pose_interp_max,
+                score_decay=args.pose_interp_score_decay,
+                velocity_window=args.pose_interp_velocity_window,
+                min_history_required=args.pose_interp_min_history,
+                anchor_to_kalman=not args.pose_interp_no_anchor,
+            )
 
         event_logger = SessionEventLogger(self)
 
@@ -201,6 +210,7 @@ class FallDetectionSession:
             lost_track_model_thr=args.lost_track_model_thr,
             track_merge_same_frame=args.track_merge_same_frame,
             fall_trend=fall_trend,
+            pose_interpolator=pose_interpolator,
             event_logger=event_logger,
         )
 
@@ -257,8 +267,11 @@ class FallDetectionSession:
                 "alerted": bool(st.alerted),
                 "ever_alerted": bool(st.ever_alerted),
                 "alert_reason": str(st.last_alert_reason or ""),
+                "alert_source": str(getattr(st, "alert_source_tag", "") or ""),
                 "bbox": [float(v) for v in st.bbox],
                 "is_ready": bool(st.is_ready),
+                "n_interp": int(getattr(st, "n_interpolated_frames", 0)),
+                "total_interp": int(getattr(st, "total_interpolated_frames", 0)),
             })
 
         return {
@@ -438,6 +451,16 @@ def build_argparser():
     # FallTrendDetector
     p.add_argument("--fall-trend", action="store_true", default=True)
     p.add_argument("--no-fall-trend", dest="fall_trend", action="store_false")
+
+    # Tracking continuity.
+    p.add_argument("--pose-interp", action="store_true", default=False,
+                   help="启用短时跟丢骨架外推,默认关闭")
+    p.add_argument("--no-pose-interp", dest="pose_interp", action="store_false")
+    p.add_argument("--pose-interp-max", type=int, default=8)
+    p.add_argument("--pose-interp-score-decay", type=float, default=0.85)
+    p.add_argument("--pose-interp-velocity-window", type=int, default=4)
+    p.add_argument("--pose-interp-min-history", type=int, default=3)
+    p.add_argument("--pose-interp-no-anchor", action="store_true")
 
     # 日志
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])

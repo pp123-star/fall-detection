@@ -177,6 +177,14 @@ def run_one_video(video_path: Path, out_dir: Path, args, label: Optional[int]) -
             cmd += ["--fall-trend-disable-disappear"]
         if args.fall_trend_disable_autopsy:
             cmd += ["--fall-trend-disable-autopsy"]
+    if args.pose_interp:
+        cmd += ["--pose-interp",
+                "--pose-interp-max", str(args.pose_interp_max),
+                "--pose-interp-score-decay", str(args.pose_interp_score_decay),
+                "--pose-interp-velocity-window", str(args.pose_interp_velocity_window),
+                "--pose-interp-min-history", str(args.pose_interp_min_history)]
+        if args.pose_interp_no_anchor:
+            cmd += ["--pose-interp-no-anchor"]
     if label is not None:
         cmd += ["--ground-truth", str(int(label))]
 
@@ -407,6 +415,16 @@ def main():
     p.add_argument("--fall-trend-disable-geom", action="store_true")
     p.add_argument("--fall-trend-disable-disappear", action="store_true")
     p.add_argument("--fall-trend-disable-autopsy", action="store_true")
+
+    # Tracking continuity: short-gap pose extrapolation.
+    p.add_argument("--pose-interp", action="store_true",
+                   help="启用短时跟丢骨架外推,让 PoseConv3D buffer 尽量不断流")
+    p.add_argument("--pose-interp-max", type=int, default=8)
+    p.add_argument("--pose-interp-score-decay", type=float, default=0.85)
+    p.add_argument("--pose-interp-velocity-window", type=int, default=4)
+    p.add_argument("--pose-interp-min-history", type=int, default=3)
+    p.add_argument("--pose-interp-no-anchor", action="store_true",
+                   help="关闭 Kalman bbox 锚定")
 
     args = p.parse_args()
 

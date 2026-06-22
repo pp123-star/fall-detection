@@ -122,6 +122,10 @@ class TombstoneTrack:
     last_smoothed_prob: float = 0.0
     last_raw_prob: float = 0.0
     over_thr_streak: int = 0
+    kalman: Optional["SimpleKalmanBoxTracker"] = None
+    recent_raw_probs: Optional[deque] = None
+    recent_heuristics: Optional[deque] = None
+    recent_bboxes: Optional[deque] = None
 
 
 class TrackMerger:
@@ -131,7 +135,7 @@ class TrackMerger:
         self,
         iou_thr: float = 0.3,
         center_dist_norm_thr: float = 0.15,
-        max_gap_frames: int = 15,
+        max_gap_frames: int = 60,
         enabled: bool = True,
     ):
         self.iou_thr = iou_thr
@@ -151,6 +155,10 @@ class TrackMerger:
         last_smoothed_prob: float = 0.0,
         last_raw_prob: float = 0.0,
         over_thr_streak: int = 0,
+        kalman=None,
+        recent_raw_probs=None,
+        recent_heuristics=None,
+        recent_bboxes=None,
     ):
         if not self.enabled:
             return
@@ -163,6 +171,10 @@ class TrackMerger:
             last_smoothed_prob=last_smoothed_prob,
             last_raw_prob=last_raw_prob,
             over_thr_streak=over_thr_streak,
+            kalman=kalman,
+            recent_raw_probs=recent_raw_probs,
+            recent_heuristics=recent_heuristics,
+            recent_bboxes=recent_bboxes,
         )
 
     def try_match(
@@ -185,21 +197,27 @@ class TrackMerger:
                 del self.tombstones[old_tid]
                 continue
 
-            iou = bbox_iou(tomb.last_bbox, new_bbox)
-            dist = bbox_center_dist_norm(tomb.last_bbox, new_bbox, img_diag)
-            score = 0.0
-            reason = None
-            if iou >= self.iou_thr:
-                score = iou
-                reason = f"iou={iou:.2f}"
-            elif dist <= self.center_dist_norm_thr:
-                score = max(0.0, 1.0 - dist / max(self.center_dist_norm_thr, 1e-6))
-                reason = f"dist={dist:.3f}"
+            candidate_bboxes = [("static", tomb.last_bbox)]
+            if tomb.kalman is not None:
+                candidate_bboxes.append(("kalman", tomb.kalman.predict_bbox(current_frame)))
 
-            if score > best_score:
-                best_score = score
-                best = tomb
-                best_reason = reason
+            for tag, cand_bbox in candidate_bboxes:
+                iou = bbox_iou(cand_bbox, new_bbox)
+                dist = bbox_center_dist_norm(cand_bbox, new_bbox, img_diag)
+                score = 0.0
+                reason = None
+                weight = 1.0 if tag == "static" else 0.9
+                if iou >= self.iou_thr:
+                    score = iou * weight
+                    reason = f"{tag}_iou={iou:.2f}"
+                elif dist <= self.center_dist_norm_thr:
+                    score = max(0.0, 1.0 - dist / max(self.center_dist_norm_thr, 1e-6)) * weight
+                    reason = f"{tag}_dist={dist:.3f}"
+
+                if score > best_score:
+                    best_score = score
+                    best = tomb
+                    best_reason = reason
 
         if best is None:
             return None
@@ -887,3 +905,196 @@ def aggregate_summaries(summaries: List[dict], mid_thr: float = 0.5) -> dict:
         )
 
     return out
+
+
+# ============================================================
+# 7) Tracking continuity helpers
+# ============================================================
+@dataclass
+class InterpolatedFrame:
+    """One synthetic frame used to keep a short lost track's pose buffer continuous."""
+
+    kpts: np.ndarray
+    scores: np.ndarray
+    bbox: np.ndarray
+    is_interpolated: bool = True
+
+
+class SimpleKalmanBoxTracker:
+    """Lightweight bbox-center tracker for short-gap position prediction.
+
+    State is `[cx, cy, vx, vy]`; bbox width/height are kept as EMA. This is
+    intentionally dependency-free and only used for short gaps.
+    """
+
+    def __init__(self, initial_bbox: np.ndarray, initial_frame: int):
+        b = np.asarray(initial_bbox, dtype=np.float32).reshape(4)
+        cx, cy = self._center(b)
+        self.state = np.array([cx, cy, 0.0, 0.0], dtype=np.float32)
+        self.last_bbox = b.copy()
+        self.ema_w = float(max(b[2] - b[0], 1.0))
+        self.ema_h = float(max(b[3] - b[1], 1.0))
+        self.last_update_frame = int(initial_frame)
+        self.n_updates = 1
+        self.alpha_v = 0.5
+        self.alpha_size = 0.85
+
+    @staticmethod
+    def _center(bbox: np.ndarray) -> Tuple[float, float]:
+        return (
+            (float(bbox[0]) + float(bbox[2])) / 2.0,
+            (float(bbox[1]) + float(bbox[3])) / 2.0,
+        )
+
+    def update(self, bbox: np.ndarray, frame_idx: int):
+        b = np.asarray(bbox, dtype=np.float32).reshape(4)
+        cx, cy = self._center(b)
+        dt = max(1, int(frame_idx) - self.last_update_frame)
+
+        prev_cx, prev_cy = float(self.state[0]), float(self.state[1])
+        new_vx = (cx - prev_cx) / dt
+        new_vy = (cy - prev_cy) / dt
+        if self.n_updates == 1:
+            self.state[2] = new_vx
+            self.state[3] = new_vy
+        else:
+            self.state[2] = self.alpha_v * new_vx + (1.0 - self.alpha_v) * self.state[2]
+            self.state[3] = self.alpha_v * new_vy + (1.0 - self.alpha_v) * self.state[3]
+
+        self.state[0] = cx
+        self.state[1] = cy
+        w = float(max(b[2] - b[0], 1.0))
+        h = float(max(b[3] - b[1], 1.0))
+        self.ema_w = self.alpha_size * self.ema_w + (1.0 - self.alpha_size) * w
+        self.ema_h = self.alpha_size * self.ema_h + (1.0 - self.alpha_size) * h
+        self.last_bbox = b.copy()
+        self.last_update_frame = int(frame_idx)
+        self.n_updates += 1
+
+    def predict_bbox(self, frame_idx: int) -> np.ndarray:
+        dt = max(0, int(frame_idx) - self.last_update_frame)
+        damping = max(0.3, 1.0 - dt * 0.05)
+        cx = float(self.state[0]) + float(self.state[2]) * dt * damping
+        cy = float(self.state[1]) + float(self.state[3]) * dt * damping
+        w = float(max(self.ema_w, 1.0))
+        h = float(max(self.ema_h, 1.0))
+        return np.array([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], dtype=np.float32)
+
+    def velocity_norm(self) -> float:
+        return float(np.hypot(self.state[2], self.state[3]))
+
+
+class PoseInterpolator:
+    """Extrapolate COCO-17 skeletons for short tracking gaps.
+
+    The output stays in the original image coordinate system and keypoint scores
+    decay per extrapolated frame so the model can down-weight synthetic poses.
+    """
+
+    def __init__(
+        self,
+        max_extrapolation_frames: int = 8,
+        score_decay: float = 0.85,
+        velocity_window: int = 4,
+        min_history_required: int = 3,
+        anchor_to_kalman: bool = True,
+    ):
+        self.max_extrap = max(1, int(max_extrapolation_frames))
+        self.score_decay = float(score_decay)
+        self.vel_window = max(2, int(velocity_window))
+        self.min_history = max(2, int(min_history_required))
+        self.anchor_to_kalman = bool(anchor_to_kalman)
+
+    def can_extrapolate(self, history_kpts, history_scores, gap: int) -> bool:
+        if gap < 1 or gap > self.max_extrap:
+            return False
+        if len(history_kpts) < self.min_history or len(history_scores) < self.min_history:
+            return False
+        return True
+
+    def extrapolate_one(
+        self,
+        history_kpts,
+        history_scores,
+        history_bboxes,
+        gap: int,
+        kalman_predicted_bbox: Optional[np.ndarray] = None,
+    ) -> Optional[InterpolatedFrame]:
+        if not self.can_extrapolate(history_kpts, history_scores, gap):
+            return None
+
+        window = min(len(history_kpts), self.vel_window)
+        recent_kpts = np.stack(history_kpts[-window:]).astype(np.float32)
+        recent_scores = np.stack(history_scores[-window:]).astype(np.float32)
+        delta_steps = max(window - 1, 1)
+        velocity = (recent_kpts[-1] - recent_kpts[0]) / delta_steps
+        damping = max(0.3, 1.0 - (gap - 1) * 0.1)
+        velocity_damped = velocity * damping
+
+        last_kpt = recent_kpts[-1].copy()
+        last_score = recent_scores[-1].copy()
+        new_kpt = last_kpt + velocity_damped * gap
+
+        if self.anchor_to_kalman and kalman_predicted_bbox is not None and history_bboxes:
+            last_bbox = np.asarray(history_bboxes[-1], dtype=np.float32)
+            last_cx = (float(last_bbox[0]) + float(last_bbox[2])) / 2.0
+            last_cy = (float(last_bbox[1]) + float(last_bbox[3])) / 2.0
+            pred_bbox = np.asarray(kalman_predicted_bbox, dtype=np.float32)
+            pred_cx = (float(pred_bbox[0]) + float(pred_bbox[2])) / 2.0
+            pred_cy = (float(pred_bbox[1]) + float(pred_bbox[3])) / 2.0
+            dx_kalman = pred_cx - last_cx
+            dy_kalman = pred_cy - last_cy
+            mean_extrap_dx = float(velocity_damped[:, 0].mean() * gap)
+            mean_extrap_dy = float(velocity_damped[:, 1].mean() * gap)
+            blend_dx = 0.6 * dx_kalman + 0.4 * mean_extrap_dx
+            blend_dy = 0.6 * dy_kalman + 0.4 * mean_extrap_dy
+            new_kpt = last_kpt + np.array([[blend_dx, blend_dy]], dtype=np.float32)
+
+        decay = self.score_decay ** gap
+        new_score = last_score * decay
+        if kalman_predicted_bbox is not None:
+            new_bbox = np.asarray(kalman_predicted_bbox, dtype=np.float32).reshape(4)
+        else:
+            xs = new_kpt[:, 0]
+            ys = new_kpt[:, 1]
+            margin = 10.0
+            new_bbox = np.array(
+                [xs.min() - margin, ys.min() - margin, xs.max() + margin, ys.max() + margin],
+                dtype=np.float32,
+            )
+
+        return InterpolatedFrame(
+            kpts=new_kpt.astype(np.float32),
+            scores=new_score.astype(np.float32),
+            bbox=new_bbox,
+            is_interpolated=True,
+        )
+
+
+class AlertSource:
+    """Standard alert-source labels used by local and distributed overlays."""
+
+    MODEL = "src=model"
+    LOGIC = "src=logic"
+    TREND = "src=trend"
+
+    @staticmethod
+    def classify(reason: str) -> str:
+        if not reason:
+            return "unknown"
+        r = str(reason).lower()
+        if AlertSource.MODEL in r:
+            return "model"
+        if AlertSource.LOGIC in r:
+            return "logic"
+        if AlertSource.TREND in r:
+            return "trend"
+        if "fall_trend" in r or "autopsy" in r:
+            if any(k in r for k in ("high@p", "consec_mid", "topk_mean")):
+                return "model"
+            return "trend"
+        if "track_lost_after_fall_pose" in r or "pose_heuristic" in r:
+            return "logic"
+        if any(k in r for k in ("high@p", "consec_mid", "topk_mean")):
+            return "model"
+        return "unknown"

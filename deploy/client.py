@@ -63,6 +63,21 @@ COCO_SKELETON = [
     (0, 1), (0, 2), (1, 3), (2, 4),
 ]
 
+COLOR_NORMAL = (60, 200, 60)
+COLOR_FALL_MODEL = (60, 60, 240)
+COLOR_FALL_LOGIC = (220, 60, 220)
+COLOR_FALL_TREND = (0, 165, 255)
+COLOR_INTERP = (100, 160, 220)
+COLOR_BUFFERING = (160, 160, 160)
+
+
+def _color_by_source(src: str):
+    return {
+        "model": COLOR_FALL_MODEL,
+        "logic": COLOR_FALL_LOGIC,
+        "trend": COLOR_FALL_TREND,
+    }.get(str(src or ""), COLOR_FALL_MODEL)
+
 
 # ============================================================
 # YOLO Pose 封装
@@ -164,19 +179,39 @@ def draw_overlay(frame: np.ndarray, persons: list,
         heur = float(st.get("heuristic_score", 0.0))
         display_id = int(st.get("display_id", tid))
         is_ready = bool(st.get("is_ready", False))
+        alert_source = str(st.get("alert_source", "") or "")
+        n_interp = int(st.get("n_interp", 0))
 
         if alerted:
-            color = (0, 0, 255); thickness = 4
+            color = _color_by_source(alert_source)
+            thickness = 4
         elif ever_alerted:
-            color = (0, 120, 220); thickness = 3
+            color = _color_by_source(alert_source)
+            thickness = 3
+        elif n_interp > 0:
+            color = COLOR_INTERP
+            thickness = 2
         elif is_ready:
-            color = (0, 200, 0); thickness = 2
+            color = COLOR_NORMAL
+            thickness = 2
         else:
-            color = (180, 180, 180); thickness = 1  # buffer 未满
+            color = COLOR_BUFFERING
+            thickness = 1
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-        status = "FALL!" if alerted else ("WARNING" if ever_alerted else "NORMAL")
+        if alerted:
+            status = {"model": "MODEL FALL", "logic": "LOGIC FALL", "trend": "TREND FALL"}.get(
+                alert_source, "FALL"
+            )
+        elif ever_alerted:
+            status = "WARN"
+        elif n_interp > 0:
+            status = f"INTERP({n_interp})"
+        elif not is_ready:
+            status = "BUF"
+        else:
+            status = "NORMAL"
         label1 = f"id:{display_id} {status}"
         label2 = f"P:{fall_prob:.2f} S:{smoothed:.2f} H:{heur:.2f}"
 
